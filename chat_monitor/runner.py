@@ -17,11 +17,34 @@ logger = logging.getLogger(__name__)
 
 
 def ensure_session_path_ready() -> None:
-    """Ensure the Telethon session parent directory exists and is writable."""
+    """Ensure the Telethon session parent directory exists and is writable.
+
+    If CHAT_MONITOR_SESSION_B64 env var is set, decodes it into the .session file.
+    This allows passing a pre-authorized Telethon session to Render via env var.
+    """
+    import base64
+    import os as _os
+
+    session_b64 = _os.environ.get("CHAT_MONITOR_SESSION_B64", "")
+    if session_b64:
+        session_path = Path(settings.chat_monitor_session_path)
+        if not session_path.exists():
+            try:
+                session_path.parent.mkdir(parents=True, exist_ok=True)
+                decoded = base64.b64decode(session_b64)
+                session_path.write_bytes(decoded)
+                logger.info(
+                    "Session decoded from CHAT_MONITOR_SESSION_B64 -> %s (%d bytes)",
+                    session_path, len(decoded),
+                )
+            except Exception as exc:
+                logger.warning("Failed to decode CHAT_MONITOR_SESSION_B64: %s", exc)
+
     session_path = Path(settings.chat_monitor_session_path)
     candidates = [session_path]
 
-    # Render/Web platforms often have a writable /tmp but not a dedicated /app/session volume.
+    # Render/Web platforms often have a writable /tmp but not a dedicated /app/session volume.</old_str>
+</edit_file>
     if session_path.is_absolute() and "tmp" not in {part.lower() for part in session_path.parts}:
         candidates.append(Path("/tmp") / session_path.name)
 
