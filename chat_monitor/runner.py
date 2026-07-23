@@ -19,28 +19,38 @@ logger = logging.getLogger(__name__)
 def ensure_session_path_ready() -> None:
     """Ensure the Telethon session parent directory exists and is writable.
 
-    If CHAT_MONITOR_SESSION_B64 env var is set, decodes it into the .session file.
-    This allows passing a pre-authorized Telethon session to Render via env var.
+    If chat_monitor.session.b64 exists alongside the source code, decodes it
+    into the configured .session path at startup. This lets us commit a
+    pre-authorized Telethon session as base64 text (safe for git) instead
+    of binary, avoiding the need for interactive auth on Render.
+
+    The .b64 file is created locally after QR login:
+        python scripts/telethon_qr_login.py
+        base64 -w0 chat_monitor.session > chat_monitor.session.b64
     """
     import base64
-    import os as _os
-
-    session_b64 = _os.environ.get("CHAT_MONITOR_SESSION_B64", "")
-    if session_b64:
-        session_path = Path(settings.chat_monitor_session_path)
-        if not session_path.exists():
-            try:
-                session_path.parent.mkdir(parents=True, exist_ok=True)
-                decoded = base64.b64decode(session_b64)
-                session_path.write_bytes(decoded)
-                logger.info(
-                    "Session decoded from CHAT_MONITOR_SESSION_B64 -> %s (%d bytes)",
-                    session_path, len(decoded),
-                )
-            except Exception as exc:
-                logger.warning("Failed to decode CHAT_MONITOR_SESSION_B64: %s", exc)
 
     session_path = Path(settings.chat_monitor_session_path)
+    b64_candidates = [
+        session_path.with_suffix(".session.b64"),
+        Path("chat_monitor.session.b64"),
+    ]
+    if not session_path.exists():
+        for b64_path in b64_candidates:
+            if b64_path.exists():
+                try:
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    encoded = b64_path.read_text().strip()
+                    decoded = base64.b64decode(encoded)
+                    session_path.write_bytes(decoded)
+                    logger.info(
+                        "Session decoded from %s -> %s (%d bytes)",
+                        b64_path, session_path, len(decoded),
+                    )
+                    break
+                except Exception as exc:
+                    logger.warning("Failed to decode session from %s: %s", b64_path, exc)
+
     candidates = [session_path]
 
     if session_path.is_absolute() and "tmp" not in {part.lower() for part in session_path.parts}:
@@ -150,10 +160,10 @@ async def _heartbeat_loop() -> None:
 
 async def run_chat_monitor(bot, session_factory_arg) -> None:
     """Запуск Chat Monitor как фоновой задачи внутри основного бота.
-    
+
     Используется bot.py для запуска в одном процессе с ботом.
     При отмене (CancelledError) завершается gracefully.
-    
+
     Args:
         bot: aiogram Bot instance (не используется, но передаётся для совместимости)
         session_factory_arg: SQLAlchemy session factory (заменяет глобальный)
@@ -251,24 +261,22 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
             _mask_phone(settings.chat_monitor_phone),
             settings.chat_monitor_force_sms,
         )
-        
-        # На Render/без интерактивного терминала client.start() упадёт с EOFError
-        # при попытке прочитать код авторизации из stdin. Проверяем наличие сессии
-        # и используем code_callback с человекочитаемой ошибкой.
+
+        # Render has no interactive terminal — we must have an existing .session file
         session_file = Path(settings.chat_monitor_session_path)
         if not session_file.exists():
             logger.warning(
                 "Chat Monitor: session file %s not found. "
-                "Authentication required — запусти бота локально с интерактивным "
-                "терминалом или используй QR-логин (python scripts/telethon_qr_login.py) "
-                "чтобы создать .session файл, затем загрузи его на сервер.",
+                "Run locally or use QR login to create .session, "
+                "then encode to base64 and commit as chat_monitor.session.b64.",
                 settings.chat_monitor_session_path,
             )
             raise RuntimeError(
                 "Chat Monitor requires an existing .session file. "
-                "Run locally with TELEGRAM QR first."
+                "Encode chat_monitor.session to base64 and commit "
+                "as chat_monitor.session.b64"
             )
-        
+
         try:
             await client.start(
                 phone=normalize_phone(settings.chat_monitor_phone),
@@ -276,12 +284,13 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
             )
         except EOFError:
             logger.error(
-                "Chat Monitor: EOFError при авторизации — нет интерактивного "
-                "терминала (Render). Запусти локально для создания .session файла."
+                "Chat Monitor: EOFError during auth — no interactive terminal "
+                "on Render. Create .session locally and commit as .b64."
             )
             raise
+
         restrict_file_permissions(settings.chat_monitor_session_path)
-        
+
         me = await client.get_me()
         logger.info(
             "Chat Monitor: authenticated as user_id=%s username=%s",
@@ -291,7 +300,7 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
 
         # Запускаем heartbeat параллельно
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
-        
+
         try:
             await client.run_until_disconnected()
         except asyncio.CancelledError:
@@ -315,7 +324,7 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
 
 async def run() -> None:
     """Standalone запуск Chat Monitor (старый способ через python -m chat_monitor.runner).
-    
+
     Для обратной совместимости. Новый способ: запуск вместе с ботом через bot.py.
     """
     if settings.environment.lower() == "production":
