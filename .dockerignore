@@ -51,9 +51,12 @@ deploy/
 # Telethon-сессия — по сути ключ от аккаунта
 *.session
 *.session-journal
-chat_monitor.session*
+chat_monitor.session
+chat_monitor.session-journal
 *.journal
 *.heartbeat
+# .b64 (base64 encoded) не исключаем — нужен для Render
+# chat_monitor.session.b64 копируется в Docker-образ
 # Локальная SQLite-БД (данные монтируются как том, см. ниже)
 sales_agent.db
 *.db
