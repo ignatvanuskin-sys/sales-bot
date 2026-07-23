@@ -43,8 +43,6 @@ def ensure_session_path_ready() -> None:
     session_path = Path(settings.chat_monitor_session_path)
     candidates = [session_path]
 
-    # Render/Web platforms often have a writable /tmp but not a dedicated /app/session volume.</old_str>
-</edit_file>
     if session_path.is_absolute() and "tmp" not in {part.lower() for part in session_path.parts}:
         candidates.append(Path("/tmp") / session_path.name)
 
