@@ -18,9 +18,15 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Несколько Overpass-серверов для fallback (PERF-4).
+# Если основной (overpass-api.de) отвечает 504/таймаут, перебираем следующие.
+OVERPASS_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass-api.ru/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 MAX_LIMIT = 60
-REQUEST_TIMEOUT_SECONDS = 40
+REQUEST_TIMEOUT_SECONDS = 60
 # TTL кэша результатов Overpass в секундах (PERF-1).
 # Повторный запрос того же города+категории в течение этого времени не идёт в сеть.
 CACHE_TTL_SECONDS = 1800  # 30 минут
@@ -78,14 +84,7 @@ class Company:
 
 
 def _sanitize_ql(value: str) -> str:
-    """Whitelist-фильтр для значений, подставляемых в Overpass QL (S-1).
-
-    Разрешаем только символы, встречающиеся в реальных топонимах:
-    буквы (любые Unicode), цифры, пробел, дефис, точку, апостроф, скобки
-    (для «Ростов-на-Дону», «Нур-Султан», «Алма-Ата» и т.п.).
-    Всё остальное — удаляем. Это надёжнее blacklist: новые QL-спецсимволы
-    (;, {, }, ->, .a и т.д.) не попадут в запрос автоматически.
-    """
+    """Whitelist-фильтр для значений, подставляемых в Overpass QL."""
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
                   "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
                   "0123456789 -.'()")
@@ -98,40 +97,15 @@ class _RetryablePlacesError(Exception):
         self.delay = delay
 
 
-# Служебные слова, которые OSM держит в НИЖНЕМ регистре внутри составных
-# названий городов: «Ростов-на-Дону», «Комсомольск-на-Амуре», «Рио-де-Жанейро».
-# str.title() ошибочно капитализирует их ("Ростов-На-Дону") -> area["name"=...]
-# не находится -> поиск возвращает 0 объектов при HTTP 200 (тот же класс бага,
-# что и с «астаной», только всплывает на конкретных городах). Первое слово
-# названия НЕ трогаем — только внутренние токены.
 _CITY_LOWER_CONNECTORS: frozenset[str] = frozenset({
-    # русские предлоги в топонимах
     "на", "над", "под", "по", "при", "у", "за",
-    # частые транслитерации иностранных названий
     "де", "ла", "ле", "дель", "ди", "да", "дю", "дос", "лос", "лас", "эль",
 })
 
-# Токены-слова между разделителями (пробел/дефис). Разделители сохраняем.
 _CITY_TOKEN_SPLIT = re.compile(r"([ \-])")
 
 
 def normalize_city(city: str) -> str:
-    """Приводит регистр названия города к тому, как его хранит OSM.
-
-    Overpass сравнивает area["name"="..."] РЕГИСТРОЗАВИСИМО, а OSM хранит
-    города в «Заглавном Виде Слов» ("Астана", "Нижний Новгород"). Пользователь
-    вводит как угодно ("астана", "АСТАНА") — и без нормализации area просто не
-    находится: запрос отрабатывает штатно (HTTP 200), но возвращает 0 объектов,
-    из-за чего бот молча отвечает «ничего не нашлось». Это и был реальный баг с
-    городом «астана».
-
-    База — str.title() (каждое слово с заглавной через пробелы/дефисы), но затем
-    служебные слова из _CITY_LOWER_CONNECTORS внутри названия возвращаются в
-    нижний регистр: OSM хранит «Ростов-на-Дону», а не «Ростов-На-Дону», и точный
-    поиск по неверному регистру давал 0 результатов (реальный баг, найденный на
-    живом прогоне). Первое слово всегда с заглавной — «На…» как начало названия
-    не встречается.
-    """
     titled = city.strip().title()
     tokens = _CITY_TOKEN_SPLIT.split(titled)
     first_word_done = False
@@ -144,20 +118,11 @@ def normalize_city(city: str) -> str:
     return "".join(tokens)
 
 
-# Ключи имени, по которым ищем город. OSM хранит основной name на локальном
-# языке: для многих городов Казахстана это казахский («name»=«Өскемен» для
-# Усть-Каменогорска), а русское/английское имя лежит в name:ru / name:en.
-# Поиск только по «name» давал 0 результатов на реальном вводе «Усть-Каменогорск»
-# (в области при этом 75 кафе). Объединяем area по всем трём ключам в один набор.
 _CITY_NAME_KEYS: tuple[str, ...] = ("name", "name:ru", "name:en")
 
 
 def build_query(city: str, tag_key: str, tag_value: str) -> str:
-    # Регистр -> как в OSM (иначе area не находится), затем чистим QL-опасные символы.
     safe_city = _sanitize_ql(normalize_city(city))
-    # Объединение area-выражений по разным ключам имени в ОДИН набор .a: даже если
-    # город матчится и по name, и по name:ru, area-set схлопнёт дубликат области,
-    # поэтому объекты не задваиваются (тело запроса выполняется по .a один раз).
     area_union = "".join(
         f'area["{key}"="{safe_city}"]["place"~"city|town"];'
         for key in _CITY_NAME_KEYS
@@ -186,7 +151,6 @@ def _build_address(tags: dict) -> str | None:
 
 
 def parse_elements(data: dict) -> list[Company]:
-    """Парсит ответ Overpass. Элементы без названия пропускаем — карточка бесполезна."""
     companies: list[Company] = []
     for el in data.get("elements", []):
         tags = el.get("tags") or {}
@@ -207,51 +171,69 @@ def parse_elements(data: dict) -> list[Company]:
 
 
 async def _request_overpass(query: str) -> dict:
+    """Отправляет запрос к Overpass с fallback по нескольким URL."""
     from config import settings
 
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
     attempts = max(1, settings.external_retry_attempts + 1)
-    for attempt in range(attempts):
-        try:
-            async with _get_request_semaphore():
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(OVERPASS_URL, data={"data": query}) as resp:
-                        if resp.status >= 400:
-                            if resp.status < 500 or resp.status == 501:
-                                raise PlacesError(f"Overpass HTTP {resp.status}")
-                            raise _RetryablePlacesError(resp.status, _retry_after(resp))
-                        length = getattr(resp, "content_length", None)
-                        if length is not None and length > settings.overpass_max_response_bytes:
-                            raise PlacesError("Overpass response too large")
-                        content = getattr(resp, "content", None)
-                        if content is None:
-                            parsed = await resp.json(content_type=None)
-                        else:
-                            body = await content.read(settings.overpass_max_response_bytes + 1)
-                            if len(body) > settings.overpass_max_response_bytes:
+
+    last_error: Exception | None = None
+    for url_idx, base_url in enumerate(OVERPASS_URLS):
+        for attempt in range(attempts):
+            try:
+                async with _get_request_semaphore():
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(base_url, data={"data": query}) as resp:
+                            if resp.status >= 400:
+                                if resp.status < 500 or resp.status == 501:
+                                    raise PlacesError(f"Overpass HTTP {resp.status}")
+                                raise _RetryablePlacesError(resp.status, _retry_after(resp))
+                            length = getattr(resp, "content_length", None)
+                            if length is not None and length > settings.overpass_max_response_bytes:
                                 raise PlacesError("Overpass response too large")
-                            parsed = json.loads(body)
-                        if not isinstance(parsed, dict):
-                            raise ValueError("JSON root is not an object")
-                        return parsed
-        except _RetryablePlacesError as exc:
-            if attempt + 1 >= attempts:
-                raise PlacesError(f"Overpass HTTP {exc.status}") from exc
-            await asyncio.sleep(
-                exc.delay if exc.delay is not None
-                else settings.external_retry_base_delay_seconds * (2 ** attempt)
-            )
-        except (asyncio.TimeoutError, TimeoutError) as exc:
-            if attempt + 1 >= attempts:
-                raise PlacesError("Overpass request timed out") from exc
-            await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
-        except aiohttp.ClientError as exc:
-            if attempt + 1 >= attempts:
-                raise PlacesError(f"Overpass network error: {exc}") from exc
-            await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
-        except ValueError as exc:
-            raise PlacesError(f"Overpass returned invalid JSON: {exc}") from exc
-    raise PlacesError("Overpass request failed after retries")
+                            content = getattr(resp, "content", None)
+                            if content is None:
+                                parsed = await resp.json(content_type=None)
+                            else:
+                                body = await content.read(settings.overpass_max_response_bytes + 1)
+                                if len(body) > settings.overpass_max_response_bytes:
+                                    raise PlacesError("Overpass response too large")
+                                parsed = json.loads(body)
+                            if not isinstance(parsed, dict):
+                                raise ValueError("JSON root is not an object")
+                            logger.info("Overpass OK: url=%s", base_url)
+                            return parsed
+            except (PlacesError, ValueError):
+                raise
+            except _RetryablePlacesError as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    logger.warning("Overpass: %s failed after %s attempts, next server", base_url, attempts)
+                    break
+                await asyncio.sleep(
+                    exc.delay if exc.delay is not None
+                    else settings.external_retry_base_delay_seconds * (2 ** attempt)
+                )
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    logger.warning("Overpass: %s timeout after %s attempts, next server", base_url, attempts)
+                    break
+                await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
+            except aiohttp.ClientError as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    logger.warning("Overpass: %s network error after %s attempts, next server", base_url, attempts)
+                    break
+                await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
+
+    if isinstance(last_error, _RetryablePlacesError):
+        raise PlacesError(f"Overpass HTTP {last_error.status} (all servers)") from last_error
+    if isinstance(last_error, (asyncio.TimeoutError, TimeoutError)):
+        raise PlacesError("Overpass request timed out (all servers)") from last_error
+    if isinstance(last_error, aiohttp.ClientError):
+        raise PlacesError(f"Overpass network error (all servers): {last_error}") from last_error
+    raise PlacesError("Overpass request failed after retries (all servers)")
 
 
 def _retry_after(response) -> float | None:
@@ -268,12 +250,7 @@ def _retry_after(response) -> float | None:
 
 
 async def search_companies(city: str, category_slug: str) -> list[Company]:
-    """Поиск компаний с TTL-кэшем результатов (PERF-1).
-
-    Повторный запрос того же города+категории в течение CACHE_TTL_SECONDS
-    возвращает кэшированный результат без обращения к Overpass API.
-    Бросает PlacesError при любой проблеме с API.
-    """
+    """Поиск компаний с TTL-кэшем результатов."""
     if category_slug not in CATEGORIES:
         raise PlacesError(f"Unknown category: {category_slug!r}")
 
