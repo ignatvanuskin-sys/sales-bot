@@ -1,8 +1,7 @@
-"""Клиент OpenStreetMap Overpass API — поиск компаний по городу и категории.
+"""Client for OpenStreetMap Overpass API — search companies by city and category.
 
-Бесплатно, без ключей. Лимит результатов MAX_LIMIT — без него Overpass
-может вернуть тысячи строк и повесить бота.
-Результаты кэшируются в памяти на CACHE_TTL_SECONDS (PERF-1).
+Free, no API key required. Results are cached in memory (PERF-1).
+Multiple Overpass servers for fallback (PERF-4).
 """
 
 import asyncio
@@ -18,8 +17,6 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# Несколько Overpass-серверов для fallback (PERF-4).
-# Если основной (overpass-api.de) отвечает 504/таймаут, перебираем следующие.
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass-api.ru/api/interpreter",
@@ -27,11 +24,8 @@ OVERPASS_URLS = [
 ]
 MAX_LIMIT = 60
 REQUEST_TIMEOUT_SECONDS = 60
-# TTL кэша результатов Overpass в секундах (PERF-1).
-# Повторный запрос того же города+категории в течение этого времени не идёт в сеть.
-CACHE_TTL_SECONDS = 1800  # 30 минут
+CACHE_TTL_SECONDS = 1800  # 30 minutes
 
-# Простой in-memory кэш: ключ -> (timestamp, результат)
 _overpass_cache: OrderedDict[str, tuple[float, list]] = OrderedDict()
 _inflight: dict[str, asyncio.Task] = {}
 _inflight_lock = asyncio.Lock()
@@ -44,27 +38,25 @@ def _get_request_semaphore() -> asyncio.Semaphore:
     loop = asyncio.get_running_loop()
     if _request_semaphore is None or _request_semaphore_loop is not loop:
         from config import settings
-
         _request_semaphore = asyncio.Semaphore(max(1, settings.overpass_max_concurrency))
         _request_semaphore_loop = loop
     return _request_semaphore
 
-# Категории бизнеса -> OSM-теги (key, value)
+
 CATEGORIES: dict[str, tuple[str, str, str]] = {
-    # slug: (label, tag_key, tag_value)
-    "barber": ("Барбершоп / Парикмахерская", "shop", "hairdresser"),
-    "beauty": ("Салон красоты", "shop", "beauty"),
-    "cafe": ("Кафе", "amenity", "cafe"),
-    "restaurant": ("Ресторан", "amenity", "restaurant"),
-    "fitness": ("Фитнес-клуб", "leisure", "fitness_centre"),
-    "dentist": ("Стоматология", "amenity", "dentist"),
-    "car_repair": ("Автосервис", "shop", "car_repair"),
-    "florist": ("Магазин цветов", "shop", "florist"),
+    "barber": ("Barbershop / Hairdresser", "shop", "hairdresser"),
+    "beauty": ("Beauty salon", "shop", "beauty"),
+    "cafe": ("Cafe", "amenity", "cafe"),
+    "restaurant": ("Restaurant", "amenity", "restaurant"),
+    "fitness": ("Fitness club", "leisure", "fitness_centre"),
+    "dentist": ("Dentist", "amenity", "dentist"),
+    "car_repair": ("Car repair", "shop", "car_repair"),
+    "florist": ("Flower shop", "shop", "florist"),
 }
 
 
 class PlacesError(Exception):
-    """Любая ошибка при обращении к Overpass (сеть, таймаут, HTTP 4xx/5xx, плохой JSON)."""
+    """Any Overpass error (network, timeout, HTTP 4xx/5xx, bad JSON)."""
 
 
 @dataclass
@@ -83,23 +75,22 @@ class Company:
         }
 
 
-def _sanitize_ql(value: str) -> str:
-    """Whitelist-фильтр для значений, подставляемых в Overpass QL."""
-    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                  "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
-                  "0123456789 -.'()")
-    return "".join(ch for ch in value if ch in allowed)
-
-
 class _RetryablePlacesError(Exception):
     def __init__(self, status: int, delay: float | None = None):
         self.status = status
         self.delay = delay
 
 
+def _sanitize_ql(value: str) -> str:
+    allowed = set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789 -.'()"
+    )
+    return "".join(ch for ch in value if ch in allowed)
+
+
 _CITY_LOWER_CONNECTORS: frozenset[str] = frozenset({
-    "на", "над", "под", "по", "при", "у", "за",
-    "де", "ла", "ле", "дель", "ди", "да", "дю", "дос", "лос", "лас", "эль",
+    "na", "nad", "pod", "po", "pri", "u", "za",
 })
 
 _CITY_TOKEN_SPLIT = re.compile(r"([ \-])")
@@ -171,14 +162,14 @@ def parse_elements(data: dict) -> list[Company]:
 
 
 async def _request_overpass(query: str) -> dict:
-    """Отправляет запрос к Overpass с fallback по нескольким URL."""
+    """Send request to Overpass with fallback across multiple URLs."""
     from config import settings
 
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
     attempts = max(1, settings.external_retry_attempts + 1)
 
     last_error: Exception | None = None
-    for url_idx, base_url in enumerate(OVERPASS_URLS):
+    for _url_idx, base_url in enumerate(OVERPASS_URLS):
         for attempt in range(attempts):
             try:
                 async with _get_request_semaphore():
@@ -200,10 +191,10 @@ async def _request_overpass(query: str) -> dict:
                                     raise PlacesError("Overpass response too large")
                                 parsed = json.loads(body)
                             if not isinstance(parsed, dict):
-                                raise ValueError("JSON root is not an object")
+                                raise PlacesError("Overpass returned non-object JSON")
                             logger.info("Overpass OK: url=%s", base_url)
                             return parsed
-            except (PlacesError, ValueError):
+            except PlacesError:
                 raise
             except _RetryablePlacesError as exc:
                 last_error = exc
@@ -226,6 +217,12 @@ async def _request_overpass(query: str) -> dict:
                     logger.warning("Overpass: %s network error after %s attempts, next server", base_url, attempts)
                     break
                 await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+                if attempt + 1 >= attempts:
+                    logger.warning("Overpass: %s invalid JSON after %s attempts, next server", base_url, attempts)
+                    break
+                await asyncio.sleep(settings.external_retry_base_delay_seconds * (2 ** attempt))
 
     if isinstance(last_error, _RetryablePlacesError):
         raise PlacesError(f"Overpass HTTP {last_error.status} (all servers)") from last_error
@@ -233,6 +230,8 @@ async def _request_overpass(query: str) -> dict:
         raise PlacesError("Overpass request timed out (all servers)") from last_error
     if isinstance(last_error, aiohttp.ClientError):
         raise PlacesError(f"Overpass network error (all servers): {last_error}") from last_error
+    if isinstance(last_error, (json.JSONDecodeError, ValueError)):
+        raise PlacesError(f"Overpass invalid JSON (all servers): {last_error}") from last_error
     raise PlacesError("Overpass request failed after retries (all servers)")
 
 
@@ -250,7 +249,7 @@ def _retry_after(response) -> float | None:
 
 
 async def search_companies(city: str, category_slug: str) -> list[Company]:
-    """Поиск компаний с TTL-кэшем результатов."""
+    """Search companies with TTL cache."""
     if category_slug not in CATEGORIES:
         raise PlacesError(f"Unknown category: {category_slug!r}")
 
@@ -264,7 +263,7 @@ async def search_companies(city: str, category_slug: str) -> list[Company]:
             return cached_result
         del _overpass_cache[cache_key]
 
-    _, tag_key, tag_value = CATEGORIES[category_slug]
+    _label, tag_key, tag_value = CATEGORIES[category_slug]
     async with _inflight_lock:
         task = _inflight.get(cache_key)
         if task is None:
