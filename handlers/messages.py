@@ -18,6 +18,7 @@ from keyboards.main_menu import messages_kb
 from services.ai import AIError, AIOverloadError, AIRateLimitError, generate_messages
 from states.fsm import EditMessageFSM
 from utils.emoji_config import E, P
+from utils.fsm_input import get_text_input
 from utils.idempotency import IdempotencyLock
 from utils.safe_send import safe_answer, safe_edit
 
@@ -128,9 +129,9 @@ async def edit_message_start(callback: CallbackQuery, state: FSMContext) -> None
 
 @router.message(EditMessageFSM.waiting_text)
 async def edit_message_received(message: Message, state: FSMContext) -> None:
-    new_text = (message.text or "").strip()
-    if not new_text:
-        await message.answer("Пустой текст не подойдёт. Пришли текст сообщения.")
+    # F3: фото/стикер раньше давали «Пустой текст...» без объяснения и выхода.
+    new_text = await get_text_input(message, "Пустой текст не подойдёт. Пришли текст сообщения.")
+    if new_text is None:
         return
 
     data = await state.get_data()

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import tempfile
 from pathlib import Path
 
 from config import settings
@@ -42,7 +43,21 @@ def ensure_session_path_ready() -> None:
                     session_path.parent.mkdir(parents=True, exist_ok=True)
                     encoded = b64_path.read_text().strip()
                     decoded = base64.b64decode(encoded)
-                    session_path.write_bytes(decoded)
+                    # SEC-FIX: пишем через private temp-файл + атомарный rename,
+                    # чтобы файл никогда не существовал с permissive umask.
+                    import os
+                    fd, tmp_name = tempfile.mkstemp(dir=str(session_path.parent), prefix=".sess_")
+                    try:
+                        with os.fdopen(fd, "wb") as tmpf:
+                            tmpf.write(decoded)
+                        os.chmod(tmp_name, 0o600)
+                        os.replace(tmp_name, session_path)
+                    except BaseException:
+                        try:
+                            os.unlink(tmp_name)
+                        except OSError:
+                            pass
+                        raise
                     logger.info(
                         "Session decoded from %s -> %s (%d bytes)",
                         b64_path, session_path, len(decoded),
@@ -142,17 +157,27 @@ async def event_matches_chat_refs(event, chat_refs: list[str]) -> bool:
     return False
 
 
-async def _heartbeat_loop() -> None:
-    """P-4: Периодически пишет timestamp в heartbeat-файл."""
-    from datetime import datetime, timezone
+async def _heartbeat_loop(get_metrics=None) -> None:
+    """P-4: Периодически пишет heartbeat с метриками пайплайна.
 
-    interval = settings.heartbeat_interval_minutes * 60
+    get_metrics() возвращает dict с ключами queue_size / workers_alive /
+    processed_last_interval — позволяет внешнему watchdog отличить живой
+    процесс от «живого heartbeat при мёртвых воркерах» (C4).
+    """
+    from datetime import datetime, timezone
+    import json as _json
+
+    interval = max(30, settings.heartbeat_interval_minutes * 60)
     while True:
         try:
-            ts = datetime.now(timezone.utc).isoformat()
+            payload = {"ts": datetime.now(timezone.utc).isoformat()}
+            if get_metrics is not None:
+                try:
+                    payload.update(get_metrics())
+                except Exception:
+                    logger.debug("heartbeat metrics failed", exc_info=True)
             with open(settings.heartbeat_file, "w", encoding="utf-8") as f:
-                f.write(ts)
-            logger.debug("Heartbeat written: %s", ts)
+                _json.dump(payload, f)
         except Exception:
             logger.debug("Failed to write heartbeat", exc_info=True)
         await asyncio.sleep(interval)
@@ -201,6 +226,28 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
             maxsize=settings.chat_monitor_queue_size
         )
 
+        # --- C4: метрики пайплайна + супервизор воркеров ---
+        # Воркер, погибший от BaseException (вне двух локальных except),
+        # больше не оставляет монитор «живым, но немым»: heartbeat видел бы
+        # фиктивное здоровье, а очередь заполнилась бы до отказа.
+        _metrics = {
+            "processed_total": 0,
+            "processed_last_interval": 0,
+            "queue_size": 0,
+            "workers_alive": 0,
+            "worker_restarts": 0,
+        }
+        _worker_tasks: list[asyncio.Task] = []
+
+        def _collect_metrics() -> dict:
+            alive = sum(1 for t in _worker_tasks if not t.done())
+            _metrics["workers_alive"] = alive
+            _metrics["queue_size"] = candidate_queue.qsize()
+            # Сбрасываем «за интервал» при каждом чтении heartbeat-циклом.
+            snap = dict(_metrics)
+            _metrics["processed_last_interval"] = 0
+            return snap
+
         async def candidate_worker(worker_id: int) -> None:
             while True:
                 candidate, config = await candidate_queue.get()
@@ -211,6 +258,8 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
                         owner_tg_id=config.owner_tg_id,
                         min_score=config.min_score,
                     )
+                    _metrics["processed_total"] += 1
+                    _metrics["processed_last_interval"] += 1
                     if lead is not None:
                         logger.info(
                             "Chat lead saved: id=%s chat=%s worker=%s",
@@ -226,14 +275,41 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
                 finally:
                     candidate_queue.task_done()
 
-        worker_tasks = [
-            asyncio.create_task(candidate_worker(index), name=f"chat-monitor-worker-{index}")
-            for index in range(settings.chat_monitor_worker_count)
-        ]
+        def _spawn_worker(index: int) -> asyncio.Task:
+            task = asyncio.create_task(
+                candidate_worker(index), name=f"chat-monitor-worker-{index}"
+            )
+
+            def _on_done(done: asyncio.Task, idx: int = index) -> None:
+                if done.cancelled():
+                    return
+                exc = done.exception()
+                if exc is not None:
+                    _metrics["worker_restarts"] += 1
+                    capture_exception(exc)
+                    logger.error(
+                        "Chat monitor worker-%s died; restarting (%s)", idx, exc
+                    )
+                    replacement = _spawn_worker(idx)
+                    _worker_tasks.append(replacement)
+
+            task.add_done_callback(_on_done)
+            return task
+
+        for _i in range(settings.chat_monitor_worker_count):
+            _worker_tasks.append(_spawn_worker(_i))
+        worker_tasks = _worker_tasks
 
         @client.on(events.NewMessage())
         async def on_new_message(event) -> None:
             try:
+                # Не обрабатываем собственные сообщения (self) и исходящие — владелец,
+                # отвечая лиду в мониторимом чате, не должен порождать петлю (M2-monitor).
+                sender = getattr(event.message, "sender", None)
+                if getattr(event.message, "out", False):
+                    return
+                if sender is not None and getattr(sender, "bot", False):
+                    return
                 config = await load_runtime_config()
                 if not config.is_enabled or not config.chats:
                     return
@@ -298,8 +374,8 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
             getattr(me, "username", None),
         )
 
-        # Запускаем heartbeat параллельно
-        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+        # Запускаем heartbeat параллельно, с живыми метриками пайплайна (C4)
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(_collect_metrics))
 
         try:
             await client.run_until_disconnected()
@@ -393,6 +469,9 @@ async def run() -> None:
         phone=normalize_phone(settings.chat_monitor_phone),
         force_sms=settings.chat_monitor_force_sms,
     )
+    # SEC-FIX: Telethon мог создать/переписать сессионный файл при авторизации —
+    # права ограничиваем ПОСЛЕ старта клиента (M5-monitor).
+    restrict_file_permissions(settings.chat_monitor_session_path)
     me = await client.get_me()
     logger.info(
         "Chat monitor started as user_id=%s username=%s",

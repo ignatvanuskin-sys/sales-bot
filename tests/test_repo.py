@@ -166,7 +166,7 @@ async def test_reminders_due_and_mark_sent(session):
     due = await repo.get_due_reminders(session)
     assert [r.id for r in due] == [past.id]
 
-    await repo.mark_reminder_sent(session, past.id)
+    await repo.mark_reminder_sent(session, past.id, OWNER)
     due_after = await repo.get_due_reminders(session)
     assert due_after == []
 

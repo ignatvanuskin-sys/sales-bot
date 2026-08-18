@@ -31,8 +31,18 @@ async def get_or_create_user(session: AsyncSession, tg_user_id: int, username: s
     if user is None:
         user = User(tg_user_id=tg_user_id, username=username)
         session.add(user)
-        await session.commit()
-        await session.refresh(user)
+        try:
+            await session.commit()
+        except IntegrityError:
+            # F6: конкурентный /start от того же нового пользователя — тот, кто
+            # проиграл гонку уникального tg_user_id, брал 500. Делаем fallback:
+            # откатываемся и читаем строку, созданную победителем гонки.
+            await session.rollback()
+            user = await get_user(session, tg_user_id)
+            if user is None:  # pragma: no cover — параноидальный случай
+                raise
+        else:
+            await session.refresh(user)
     elif username and user.username != username:
         user.username = username
         await session.commit()
@@ -209,7 +219,14 @@ async def create_chat_lead(
     niche: str = "nail",
     message_id: int | None = None,
 ) -> Lead:
-    """Сохраняет релевантное сообщение из Chat Lead Monitor в общую CRM."""
+    """Сохраняет релевантное сообщение из Chat Lead Monitor в общую CRM.
+
+    SEC-H2: message_id обязателен — без него дедупликация (uq_chat_lead_dedup +
+    inbox) молча отключается (NULL != NULL в unique-индексах), что позволило бы
+    повторной доставке расплодить дубли лидов.
+    """
+    if message_id is None:
+        raise ValueError("create_chat_lead: message_id is required (dedup would be disabled)")
     normalized_username = username.lstrip("@") if username else None
     name = f"@{normalized_username}" if normalized_username else f"Telegram user {user_id}"
     lead = Lead(
@@ -243,9 +260,13 @@ async def find_chat_lead_by_message(
     user_id: int,
     message_id: int | None,
 ) -> Lead | None:
-    """Дедупликация повторной обработки одного Telegram-сообщения."""
+    """Дедупликация повторной обработки одного Telegram-сообщения.
+
+    SEC-H2: message_id=None НЕ может быть дедуплицирован (unique-индексы пропускают NULL),
+    поэтому такой поиск бессмысленен и опасен — фейлим явно.
+    """
     if message_id is None:
-        return None
+        raise ValueError("find_chat_lead_by_message: message_id is required (cannot dedup NULL)")
     result = await session.execute(
         select(Lead).where(
             Lead.owner_tg_id == owner_tg_id,
@@ -265,9 +286,14 @@ async def claim_chat_message(
     user_id: int,
     message_id: int | None,
 ) -> bool:
-    """Атомарный inbox claim до LLM. None message_id нельзя надёжно dedup'ить."""
+    """Атомарный inbox claim до LLM.
+
+    SEC-H2: message_id=None нельзя надёжно dedup'ить — раньше молча пропускали
+    (return True), что приводило к дублям. Теперь фейлим явно: вызывающий код
+    обязан обеспечить message_id (см. processor.candidate_from_event).
+    """
     if message_id is None:
-        return True
+        raise ValueError("claim_chat_message: message_id is required (cannot dedup NULL)")
     claim = ChatMessageInbox(
         owner_tg_id=owner_tg_id,
         source_chat=source_chat,
@@ -505,13 +531,21 @@ async def claim_due_reminders(
     разные строки. SQLite: BEGIN IMMEDIATE сериализует транзакцию целиком.
     Claimed строки получают is_sent=True до сетевой отправки; при ошибке сервис
     возвращает конкретную строку в unsent.
+
+    F5-ФИКС: напоминания по soft-deleted лидам НЕ отправляются — пользователь,
+    удаливший лид, ожидает, что бот перестанет о нём напоминать.
     """
     now = now or utcnow()
     async with session.begin():
         query = (
             select(Reminder)
             .options(selectinload(Reminder.lead))
-            .where(Reminder.remind_at <= now, Reminder.is_sent.is_(False))
+            .join(Lead, Lead.id == Reminder.lead_id)
+            .where(
+                Reminder.remind_at <= now,
+                Reminder.is_sent.is_(False),
+                Lead.deleted_at.is_(None),
+            )
             .order_by(Reminder.remind_at, Reminder.id)
             .limit(max(1, limit))
         )
@@ -523,21 +557,23 @@ async def claim_due_reminders(
     return reminders
 
 
-async def _set_reminder_sent(session: AsyncSession, reminder_id: int, value: bool) -> None:
-    """Один UPDATE вместо SELECT + UPDATE (CODE-4)."""
+async def _set_reminder_sent(session: AsyncSession, reminder_id: int, value: bool, owner_tg_id: int) -> None:
+    """Один UPDATE вместо SELECT + UPDATE (CODE-4), со скоупом по владельцу (SEC-M1)."""
     await session.execute(
-        update(Reminder).where(Reminder.id == reminder_id).values(is_sent=value)
+        update(Reminder)
+        .where(Reminder.id == reminder_id, Reminder.owner_tg_id == owner_tg_id)
+        .values(is_sent=value)
     )
     await session.commit()
 
 
-async def mark_reminder_sent(session: AsyncSession, reminder_id: int) -> None:
-    await _set_reminder_sent(session, reminder_id, True)
+async def mark_reminder_sent(session: AsyncSession, reminder_id: int, owner_tg_id: int) -> None:
+    await _set_reminder_sent(session, reminder_id, True, owner_tg_id)
 
 
-async def mark_reminder_unsent(session: AsyncSession, reminder_id: int) -> None:
+async def mark_reminder_unsent(session: AsyncSession, reminder_id: int, owner_tg_id: int) -> None:
     """Откат при сбое отправки — напоминание будет переотправлено поллером."""
-    await _set_reminder_sent(session, reminder_id, False)
+    await _set_reminder_sent(session, reminder_id, False, owner_tg_id)
 
 
 # ---------- LLM Call Logging (P-2) ----------

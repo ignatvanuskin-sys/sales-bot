@@ -15,7 +15,7 @@ async def test_count_active_reminders_ignores_sent(session):
     lead = await repo.create_lead(session, OWNER, "Limit Co")
     r1 = await repo.create_reminder(session, lead.id, OWNER, utcnow() + timedelta(days=1), "active")
     r2 = await repo.create_reminder(session, lead.id, OWNER, utcnow() + timedelta(days=1), "sent")
-    await repo.mark_reminder_sent(session, r2.id)
+    await repo.mark_reminder_sent(session, r2.id, OWNER)
 
     assert await repo.count_active_reminders(session, OWNER) == 1
     assert r1.id is not None

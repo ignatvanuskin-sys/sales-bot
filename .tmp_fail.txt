@@ -1,0 +1,58 @@
+﻿F                                                                        [100%]
+================================== FAILURES ===================================
+______________________ test_message_text_encrypted_in_db ______________________
+
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001B8853D7350>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B8853DA910>
+
+    async def test_message_text_encrypted_in_db(session, monkeypatch):
+        """ORM ўшЄрхЄ plaintext, р т ё√Ёющ ┴─ ыхцшЄ °шЇЁюЄхъёЄ."""
+        from cryptography.fernet import Fernet
+    
+        import utils.crypto as crypto
+    
+        monkeypatch.setattr(crypto.settings, "pii_encryption_key", Fernet.generate_key().decode())
+        crypto.reset_fernet()
+    
+>       lead = await repo.create_chat_lead(
+            session, owner_tg_id=1, source_chat="c", user_id=1, username="u",
+            message_text="ёхъЁхЄэ√щ ЄхъёЄ", message_date=utcnow(),
+            relevance_score=0.9, llm_reasoning="r",
+        )
+
+tests\test_security_fixes.py:249: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+session = <sqlalchemy.ext.asyncio.session.AsyncSession object at 0x000001B8853D7350>
+owner_tg_id = 1, source_chat = 'c', user_id = 1, username = 'u'
+message_text = 'ёхъЁхЄэ√щ ЄхъёЄ'
+message_date = datetime.datetime(2026, 7, 31, 16, 15, 32, 984137)
+relevance_score = 0.9, llm_reasoning = 'r', niche = 'nail', message_id = None
+
+    async def create_chat_lead(
+        session: AsyncSession,
+        owner_tg_id: int,
+        source_chat: str,
+        user_id: int,
+        username: str | None,
+        message_text: str,
+        message_date: datetime,
+        relevance_score: float,
+        llm_reasoning: str,
+        niche: str = "nail",
+        message_id: int | None = None,
+    ) -> Lead:
+        """╤юїЁрэ хЄ ЁхыхтрэЄэюх ёююс∙хэшх шч Chat Lead Monitor т юс∙є■ CRM.
+    
+        SEC-H2: message_id юс чрЄхыхэ Ч схч эхую фхфєяышърЎш  (uq_chat_lead_dedup +
+        inbox) ьюыўр юЄъы■ўрхЄё  (NULL != NULL т unique-шэфхъёрї), ўЄю яючтюышыю с√
+        яютЄюЁэющ фюёЄртъх ЁрёяыюфшЄ№ фєсыш ышфют.
+        """
+        if message_id is None:
+>           raise ValueError("create_chat_lead: message_id is required (dedup would be disabled)")
+E           ValueError: create_chat_lead: message_id is required (dedup would be disabled)
+
+db\repo.py:229: ValueError
+=========================== short test summary info ===========================
+FAILED tests/test_security_fixes.py::test_message_text_encrypted_in_db - Valu...
+1 failed in 1.34s

@@ -86,25 +86,38 @@ def _sanitize_ql(value: str) -> str:
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "0123456789 -.'()"
     )
-    return "".join(ch for ch in value if ch in allowed)
+    return "".join(ch for ch in value if ch in allowed or ch.isalpha())
 
 
 _CITY_LOWER_CONNECTORS: frozenset[str] = frozenset({
     "na", "nad", "pod", "po", "pri", "u", "za",
+    # Кириллические и латинские служебные слова, строчные в OSM-именах городов.
+    "на", "над", "под", "по", "при", "у", "за", "де", "ди", "даш", "деш",
 })
 
 _CITY_TOKEN_SPLIT = re.compile(r"([ \-])")
 
 
 def normalize_city(city: str) -> str:
-    titled = city.strip().title()
-    tokens = _CITY_TOKEN_SPLIT.split(titled)
+    """Нормализует название города для сопоставления с OSM (регистрозависимо).
+
+    Каждое слово (через пробел или дефис) — с заглавной буквы, КРОМЕ служебных
+    соединителей в середине названия ('на', 'под', 'у', 'де' и т.п.), которые
+    в OSM пишутся строчными: 'ростов-НА-дону' -> 'Ростов-на-Дону'.
+    Голый str.title() давал 'Ростов-На-Дону' и area не находилась — регрессия.
+    """
+    stripped = city.strip()
+    tokens = _CITY_TOKEN_SPLIT.split(stripped)
     first_word_done = False
     for i, tok in enumerate(tokens):
         if tok in (" ", "-") or tok == "":
             continue
         if first_word_done and tok.lower() in _CITY_LOWER_CONNECTORS:
+            # Служебное слово в середине названия остаётся строчным.
             tokens[i] = tok.lower()
+        else:
+            # Каждое значимое слово — с заглавной, остальные буквы строчные.
+            tokens[i] = tok[:1].upper() + tok[1:].lower()
         first_word_done = True
     return "".join(tokens)
 

@@ -14,15 +14,16 @@ class FakeUser:
 class FakeMessage:
     """Запоминает всё, что бот 'отправил' или 'отредактировал'."""
 
-    def __init__(self, text: str | None = None, user_id: int = 100, log: list | None = None):
+    def __init__(self, text: str | None = None, user_id: int = 100, log: list | None = None, content_type: str = "text"):
         self.text = text
+        self.content_type = content_type
         self.from_user = FakeUser(user_id)
         # Общий лог всех действий: ("answer"|"edit_text"|"edit_markup"|"delete", text, markup)
         self.log = log if log is not None else []
 
     async def answer(self, text: str, reply_markup=None) -> "FakeMessage":
         self.log.append(("answer", text, reply_markup))
-        return FakeMessage(text=text, user_id=self.from_user.id, log=self.log)
+        return FakeMessage(text=text, user_id=self.from_user.id, log=self.log, content_type=self.content_type)
 
     async def edit_text(self, text: str, reply_markup=None) -> None:
         self.log.append(("edit_text", text, reply_markup))

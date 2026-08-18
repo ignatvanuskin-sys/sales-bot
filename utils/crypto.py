@@ -36,8 +36,10 @@ _fernet_failed = False
 def _get_fernet():
     """Ленивая инициализация Fernet по ключу из конфига. None = шифрование выкл."""
     global _fernet, _fernet_failed
-    if _fernet is not None or _fernet_failed:
+    if _fernet is not None:
         return _fernet
+    if _fernet_failed:
+        return None
     if not settings.pii_encryption_key:
         return None
     try:
@@ -47,18 +49,35 @@ def _get_fernet():
         logger.info("PII encryption: enabled (Fernet)")
         return _fernet
     except Exception as exc:
-        # Невалидный ключ — не падаем при старте, работаем без шифрования
+        # SEC-H1: ключ ЗАДАН, но невалиден. Раньше это молча отключало шифрование
+        # и новые ПДн уходили в БД открытым текстом при вере оператора в защиту.
+        # Стартовый config_validator такой конфиг блокирует, но ключ мог стать
+        # невалидным ПОСЛЕ старта (ротация/перезапись .env без рестарта —
+        # _fernet закэширован, это защита на случай обращений до рестарта).
         _fernet_failed = True
-        logger.error("PII encryption: invalid PII_ENCRYPTION_KEY (%s) — encryption DISABLED", exc)
+        logger.error(
+            "PII encryption: invalid PII_ENCRYPTION_KEY (%s) — refusing to write plaintext", exc
+        )
         return None
 
 
 def encrypt_value(value: str | None) -> str | None:
-    """Шифрует строку (с префиксом). None/pусто и отсутствие ключа — как есть."""
+    """Шифрует строку (с префиксом). None/пусто и отсутствие ключа — как есть.
+
+    SEC-H1 (fail-closed): если ключ ЗАДАН, но невалиден — НЕ пишем plaintext,
+    а падаем. Иначе оператор с опечаткой в ключе будет считать ПДн защищёнными,
+    а они окажутся в БД открытым текстом. config_validator ловит это при старте;
+    здесь — страховка на случай ротации ключа без рестарта процесса.
+    """
     if value is None or value == "":
         return value
     f = _get_fernet()
     if f is None:
+        if settings.pii_encryption_key:
+            raise RuntimeError(
+                "PII_ENCRYPTION_KEY задан, но невалиден — шифрование недоступно. "
+                "Исправь ключ или убери его из .env. Plaintext-запись отклонена (SEC-H1)."
+            )
         return value
     # Не шифруем повторно уже зашифрованное
     if value.startswith(ENC_PREFIX):

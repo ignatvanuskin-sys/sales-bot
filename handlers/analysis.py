@@ -3,6 +3,7 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
@@ -28,14 +29,24 @@ MSG_AI_FAILED = f"{E.CROSS} Не получилось выполнить ана�
 MSG_BUDGET = f"{E.TIMER} Достигнут дневной лимит AI-вызовов. Попробуй завтра."
 MSG_ALREADY_ANALYZING = f"{E.TIMER} Анализ для этого лида уже выполняется. Подожди завершения."
 
+# B1: TTL idempotency-лока должен покрывать ХУДШЕЕ время выполнения LLM-запроса
+# (timeout на попытку × набор ретраев + запас на задержки между попытками).
+# Раньше было хардкод 120с — меньше реального worst-case (60с × (1+2 retries)),
+# из-за чего повторный клик на T+121с запускал ВТОРОЙ платный анализ того же лида.
+def _analysis_lock_ttl() -> int:
+    worst_case = settings.llm_timeout_seconds * (1 + max(0, settings.llm_retry_attempts))
+    # Запас 20% и минимум 60с, чтобы не держать лок слишком коротким/длинным.
+    return max(60, int(worst_case * 1.2))
+
 
 async def _run_analysis(owner_tg_id: int, lead_id: int) -> tuple[bool, str]:
     """Выполняет анализ и сохраняет результат. Возвращает (успех, текст ошибки для юзера).
 
     SECURITY-7: идемпотентность через Redis/memory lock — если для (owner, lead)
     уже идёт анализ, не запускаем второй. Работает в multi-instance окружении.
+    B1: TTL лока привязан к фактическому бюджету времени LLM-запроса.
     """
-    async with IdempotencyLock("analysis", owner_tg_id, lead_id, ttl=120) as acquired:
+    async with IdempotencyLock("analysis", owner_tg_id, lead_id, ttl=_analysis_lock_ttl()) as acquired:
         if not acquired:
             return False, MSG_ALREADY_ANALYZING
 
@@ -75,10 +86,10 @@ async def _run_analysis(owner_tg_id: int, lead_id: int) -> tuple[bool, str]:
         except AIError as exc:
             logger.error("AI analysis failed for lead=%s: %s", lead_id, exc)
             return False, MSG_AI_FAILED
-        
+
         # Кэшируем успешный результат
         await llm_cache.set_cached_analysis(cache_key, score, analysis, has_online_booking)
-        
+
         async with session_factory() as session:
             await repo.save_lead_analysis(
                 session, lead_id, owner_tg_id, score, analysis, has_online_booking
@@ -98,6 +109,22 @@ async def _show_lead_after_analysis(callback: CallbackQuery, lead_id: int) -> No
         format_lead_card(lead),
         reply_markup=lead_card_kb(lead.id, has_analysis=bool(lead.ai_analysis)),
     )
+
+
+async def _finish_status_message(status, callback: CallbackQuery, lead_id: int) -> None:
+    """F4: удаляем промежуточное «Анализирую…» максимально безопасно.
+
+    Раньше status.delete() без защиты: TelegramForbiddenError (юзер заблокировал
+    бота) или BadRequest 'message to delete not found' улетали в
+    ErrorHandlerMiddleware, ПОСЛЕ того как анализ уже сохранён в БД —
+    пользователь получал ложное «Произошла ошибка».
+    Здесь: не смогли удалить — молча продолжаем; показываем карточку результата.
+    """
+    try:
+        await status.delete()
+    except TelegramAPIError as exc:
+        logger.debug("Could not delete 'analyzing' status message: %s", exc)
+    await _show_lead_after_analysis(callback, lead_id)
 
 
 @router.callback_query(SearchFSM.browsing, F.data.startswith("san:"))
@@ -122,8 +149,7 @@ async def analyze_from_search(callback: CallbackQuery, state: FSMContext) -> Non
     if not ok:
         await safe_edit(status, err)
         return
-    await status.delete()
-    await _show_lead_after_analysis(callback, lead_id)
+    await _finish_status_message(status, callback, lead_id)
 
 
 @router.callback_query(F.data.startswith("anl:"))
@@ -141,5 +167,4 @@ async def analyze_from_lead(callback: CallbackQuery) -> None:
     if not ok:
         await safe_edit(status, err)
         return
-    await status.delete()
-    await _show_lead_after_analysis(callback, lead_id)
+    await _finish_status_message(status, callback, lead_id)

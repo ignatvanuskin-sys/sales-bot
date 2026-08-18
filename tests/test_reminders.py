@@ -53,12 +53,33 @@ async def test_poll_ignores_future_and_sent(session_factory):
         lead = await repo.create_lead(session, OWNER, "Лид")
         await repo.create_reminder(session, lead.id, OWNER, utcnow() + timedelta(days=1), "future")
         sent = await repo.create_reminder(session, lead.id, OWNER, utcnow() - timedelta(days=1), "old")
-        await repo.mark_reminder_sent(session, sent.id)
+        await repo.mark_reminder_sent(session, sent.id, OWNER)
 
     bot = FakeBot()
     processed = await poll_reminders_once(bot, session_factory)
     assert processed == 0
     assert bot.sent == []
+
+
+async def test_poll_skips_reminder_for_soft_deleted_lead(session_factory):
+    """F5: напоминание по soft-deleted лиду НЕ отправляется.
+
+    Пользователь, удаливший лид, ожидает тишины по нему — иначе бот кажется
+    игнорирующим удаление и 'пристаёт' вопросами о мёртвых лидах.
+    """
+    async with session_factory() as session:
+        lead = await repo.create_lead(session, OWNER, "Удалённый лид")
+        await repo.create_reminder(session, lead.id, OWNER, utcnow() - timedelta(minutes=1), "del")
+        await repo.delete_lead(session, lead.id, OWNER)
+        # Живое напоминание для контраста
+        live = await repo.create_lead(session, OWNER, "Живой лид")
+        await repo.create_reminder(session, live.id, OWNER, utcnow() - timedelta(minutes=1), "live")
+
+    bot = FakeBot()
+    processed = await poll_reminders_once(bot, session_factory)
+    assert processed == 1
+    assert len(bot.sent) == 1
+    assert "Живой лид" in bot.sent[0][1]
 
 
 async def test_poll_processes_multiple_due_at_once(session_factory):

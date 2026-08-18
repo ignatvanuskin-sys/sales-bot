@@ -15,6 +15,7 @@ from keyboards.main_menu import categories_kb, search_card_kb
 from services.places import CATEGORIES, PlacesError, search_companies
 from states.fsm import SearchFSM
 from utils.emoji_config import E, P
+from utils.fsm_input import get_text_input
 from utils.safe_send import safe_answer, safe_edit
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,13 @@ async def start_search(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(SearchFSM.waiting_city)
 async def city_received(message: Message, state: FSMContext) -> None:
-    city = (message.text or "").strip()
-    if not city:
-        await message.answer("Не понял город. Напиши текстом, например: Казань")
+    # F3: нетекстовый ввод (фото/стикер) раньше давал «Не понял город» и молчал —
+    # пользователь не понимал причину и не знал про /cancel.
+    city = await get_text_input(message, "Не понял город. Напиши текстом, например: Казань")
+    if city is None:
         return
     if len(city) > 100:
-        await message.answer("Слишком длинное название города. Напиши короче (до 100 символов).")
+        await message.answer("Слишком длинное название города. Напиши короче (до 100 символов).\n\nИли пришли /cancel для отмены.")
         return
     await state.update_data(city=city)
     await state.set_state(SearchFSM.waiting_category)

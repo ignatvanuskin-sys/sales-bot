@@ -18,6 +18,7 @@ from handlers.company import format_lead_card
 from keyboards.main_menu import lead_card_kb, leads_filter_kb, reminder_kb, reminders_list_kb, statuses_kb
 from states.fsm import NoteFSM, ReminderFSM
 from utils.emoji_config import E, P
+from utils.fsm_input import get_text_input
 from utils.safe_send import safe_answer, safe_edit
 
 logger = logging.getLogger(__name__)
@@ -430,15 +431,21 @@ async def note_start(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(NoteFSM.waiting_note)
 async def note_received(message: Message, state: FSMContext) -> None:
-    text = (message.text or "").strip()
-    if not text:
-        await message.answer("Пустая заметка не сохранится. Пришли текст.")
+    # F3: фото/стикер раньше давали буквально «Пустая заметка...» без выхода — мучили юзера.
+    text = await get_text_input(message, "Пустая заметка не сохранится. Пришли текст")
+    if text is None:
         return
     if len(text) > 2000:
-        await message.answer("Заметка слишком длинная (максимум 2000 символов). Сократи текст.")
+        await message.answer("Заметка слишком длинная (максимум 2000 символов). Сократи текст.\n\nИли пришли /cancel для отмены.")
         return
     data = await state.get_data()
     lead_id = data.get("note_lead_id")
+    if lead_id is None:
+        # FSM-данные утрачены (Redis TTL/рестарт) — не пишем «в никуда».
+        logger.warning("note_received: note_lead_id потерян (state evicted)")
+        await state.clear()
+        await safe_answer(message, f"{E.CROSS} Не помню, к какому лиду шла заметка. Открой лид заново.")
+        return
     async with session_factory() as session:
         lead = await repo.set_lead_note(session, lead_id, message.from_user.id, text)
         if lead is not None:
@@ -512,12 +519,16 @@ async def reminder_custom_start(callback: CallbackQuery, state: FSMContext) -> N
 
 @router.message(ReminderFSM.waiting_date)
 async def reminder_custom_received(message: Message, state: FSMContext) -> None:
-    dt = parse_custom_date(message.text or "")
+    # F3: фото/стикер раньше давали «Не понял дату...» без объяснения и выхода.
+    text = await get_text_input(message, "Не понял дату. Формат: 25.12.2026 15:30 или 25.12.2026")
+    if text is None:
+        return
+    dt = parse_custom_date(text)
     if dt is None:
-        await message.answer("Не понял дату. Формат: 25.12.2026 15:30 или 25.12.2026")
+        await message.answer("Не понял дату. Формат: 25.12.2026 15:30 или 25.12.2026\n\nИли пришли /cancel для отмены.")
         return
     if dt <= utcnow():
-        await message.answer("Эта дата уже в прошлом. Пришли дату в будущем.")
+        await message.answer("Эта дата уже в прошлом. Пришли дату в будущем.\n\nИли пришли /cancel для отмены.")
         return
     data = await state.get_data()
     lead_id = data.get("reminder_lead_id")

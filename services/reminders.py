@@ -53,7 +53,7 @@ async def poll_reminders_once(bot, session_factory) -> int:
                     reminder.id,
                     exc,
                 )
-                await repo.mark_reminder_unsent(session, reminder.id)
+                await repo.mark_reminder_unsent(session, reminder.id, reminder.owner_tg_id)
     return processed
 
 

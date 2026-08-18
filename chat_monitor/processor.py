@@ -203,6 +203,13 @@ async def candidate_from_event(event, niche: str = "nail") -> ChatMessageCandida
     if not text:
         return None
 
+    # SEC-H2: без message_id дедупликация (inbox + uq_chat_lead_dedup) молча отключается
+    # (NULL != NULL в unique-индексах) -> повторная доставка создаёт дубли лидов.
+    # Безопаснее пропустить такое событие, чем расплодить дубли и спам-уведомления.
+    message_id = getattr(message, "id", None)
+    if message_id is None:
+        return None
+
     sender = await event.get_sender()
     user_id = getattr(sender, "id", None) or getattr(event, "sender_id", None)
     if user_id is None:
@@ -219,7 +226,7 @@ async def candidate_from_event(event, niche: str = "nail") -> ChatMessageCandida
         username=getattr(sender, "username", None),
         message_text=text,
         message_date=_naive_utc(getattr(message, "date", None)),
-        message_id=getattr(message, "id", None),
+        message_id=message_id,
         niche=niche,
     )
 

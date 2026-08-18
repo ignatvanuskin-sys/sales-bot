@@ -17,6 +17,7 @@ from db.base import session_factory
 from keyboards.main_menu import chat_monitor_chats_kb, chat_monitor_kb
 from states.fsm import ChatMonitorFSM
 from utils.emoji_config import E, P
+from utils.fsm_input import get_text_input
 from utils.safe_send import safe_answer, safe_edit
 
 router = Router(name="chat_monitor")
@@ -112,13 +113,16 @@ async def add_chat_start(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ChatMonitorFSM.waiting_chat)
 async def add_chat_received(message: Message, state: FSMContext) -> None:
-    raw = message.text or ""
+    # F3: фото/стикер раньше давали «Не нашёл chat username/id...» без объяснения и выхода.
+    raw = await get_text_input(message, "Не нашёл chat username/id. Пришли @username или числовой chat_id")
+    if raw is None:
+        return
     if len(raw) > 4096:
-        await safe_answer(message, "Список чатов слишком длинный (максимум 4096 символов).")
+        await safe_answer(message, "Список чатов слишком длинный (максимум 4096 символов).\n\nИли пришли /cancel для отмены.")
         return
     refs = parse_chat_refs(raw, max_refs=settings.chat_monitor_max_chats)
     if not refs:
-        await safe_answer(message, "Не нашёл chat username/id. Пришли @username или числовой chat_id.")
+        await safe_answer(message, "Не нашёл chat username/id. Пришли @username или числовой chat_id.\n\nИли пришли /cancel для отмены.")
         return
     async with session_factory() as session:
         row = await repo.add_chat_monitor_chats(
@@ -173,9 +177,13 @@ async def threshold_start(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(ChatMonitorFSM.waiting_threshold)
 async def threshold_received(message: Message, state: FSMContext) -> None:
-    value = parse_min_score(message.text or "")
+    # F3: фото/стикер раньше давали «Порог должен быть числом...» без объяснения и выхода.
+    text = await get_text_input(message, "Порог должен быть числом от 0 до 1, например 0.7")
+    if text is None:
+        return
+    value = parse_min_score(text)
     if value is None:
-        await safe_answer(message, "Порог должен быть числом от 0 до 1, например 0.7.")
+        await safe_answer(message, "Порог должен быть числом от 0 до 1, например 0.7.\n\nИли пришли /cancel для отмены.")
         return
     async with session_factory() as session:
         row = await repo.set_chat_monitor_min_score(session, message.from_user.id, value)
