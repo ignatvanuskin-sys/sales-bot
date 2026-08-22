@@ -236,7 +236,7 @@ class FakeSession:
         self._response = response
         self._post_exc = post_exc
 
-    def post(self, url, data=None):
+    def post(self, url, data=None, headers=None):
         if self._post_exc:
             raise self._post_exc
         return self._response
@@ -258,6 +258,35 @@ async def test_request_overpass_ok(monkeypatch):
     _patch_session(monkeypatch, response=FakeResponse(200, {"elements": []}))
     data = await places._request_overpass("query")
     assert data == {"elements": []}
+
+
+async def test_request_overpass_sends_user_agent(monkeypatch):
+    seen = {}
+
+    class HeaderSession(FakeSession):
+        def post(self, url, data=None, headers=None):
+            seen["headers"] = headers
+            return FakeResponse(200, {"elements": []})
+
+    monkeypatch.setattr(places.aiohttp, "ClientSession", lambda timeout=None: HeaderSession())
+    assert await places._request_overpass("query") == {"elements": []}
+    assert seen["headers"]["User-Agent"].startswith("sales-bot/")
+    assert seen["headers"]["Accept"] == "application/json"
+
+
+async def test_request_overpass_falls_back_after_406(monkeypatch):
+    responses = iter([FakeResponse(406), FakeResponse(200, {"elements": []})])
+    calls = []
+
+    class SequenceSession(FakeSession):
+        def post(self, url, data=None, headers=None):
+            calls.append(url)
+            return next(responses)
+
+    monkeypatch.setattr(places.aiohttp, "ClientSession", lambda timeout=None: SequenceSession())
+    monkeypatch.setattr("config.settings.external_retry_attempts", 0)
+    assert await places._request_overpass("query") == {"elements": []}
+    assert len(calls) == 2
 
 
 async def test_request_overpass_http_4xx(monkeypatch):
@@ -298,7 +327,7 @@ async def test_request_overpass_retries_transient_5xx(monkeypatch):
     calls = 0
 
     class SequenceSession(FakeSession):
-        def post(self, url, data=None):
+        def post(self, url, data=None, headers=None):
             nonlocal calls
             calls += 1
             return next(responses)
@@ -315,7 +344,7 @@ async def test_request_overpass_does_not_retry_permanent_4xx(monkeypatch):
     calls = 0
 
     class CountingSession(FakeSession):
-        def post(self, url, data=None):
+        def post(self, url, data=None, headers=None):
             nonlocal calls
             calls += 1
             return FakeResponse(400)

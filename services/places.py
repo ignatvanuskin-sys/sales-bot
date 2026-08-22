@@ -25,6 +25,8 @@ OVERPASS_URLS = [
 MAX_LIMIT = 60
 REQUEST_TIMEOUT_SECONDS = 60
 CACHE_TTL_SECONDS = 1800  # 30 minutes
+OVERPASS_USER_AGENT = "sales-bot/1.0 (+https://github.com/ignatvanuskin-sys/sales-bot)"
+RETRYABLE_HTTP_STATUSES = frozenset({406, 408, 425, 429, 500, 501, 502, 503, 504})
 
 _overpass_cache: OrderedDict[str, tuple[float, list]] = OrderedDict()
 _inflight: dict[str, asyncio.Task] = {}
@@ -187,11 +189,18 @@ async def _request_overpass(query: str) -> dict:
             try:
                 async with _get_request_semaphore():
                     async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.post(base_url, data={"data": query}) as resp:
+                        async with session.post(
+                            base_url,
+                            data={"data": query},
+                            headers={
+                                "User-Agent": OVERPASS_USER_AGENT,
+                                "Accept": "application/json",
+                            },
+                        ) as resp:
                             if resp.status >= 400:
-                                if resp.status < 500 or resp.status == 501:
-                                    raise PlacesError(f"Overpass HTTP {resp.status}")
-                                raise _RetryablePlacesError(resp.status, _retry_after(resp))
+                                if resp.status in RETRYABLE_HTTP_STATUSES:
+                                    raise _RetryablePlacesError(resp.status, _retry_after(resp))
+                                raise PlacesError(f"Overpass HTTP {resp.status}")
                             length = getattr(resp, "content_length", None)
                             if length is not None and length > settings.overpass_max_response_bytes:
                                 raise PlacesError("Overpass response too large")
