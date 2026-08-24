@@ -114,11 +114,6 @@ def validate_config(settings) -> list[str]:
                 errors.append(
                     f"LLM_BASE_URL host {parsed_llm_url.hostname!r} не входит в LLM_ALLOWED_HOSTS."
                 )
-        else:
-            logger.warning(
-                "ALLOWED_USER_IDS не задан — бот доступен любому пользователю Telegram. "
-                "Для ограничения доступа добавь свой Telegram ID в .env: ALLOWED_USER_IDS=123456789"
-            )
 
     # --- Проверка корректности ALLOWED_USER_IDS (нечисловые значения) ---
     if settings.allowed_user_ids.strip():

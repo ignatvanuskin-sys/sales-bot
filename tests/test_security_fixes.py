@@ -159,11 +159,13 @@ async def test_purge_old_chat_message_text(session):
         session, owner_tg_id=1, source_chat="c", user_id=1, username="u",
         message_text="старый текст", message_date=utcnow() - timedelta(days=40),
         relevance_score=0.9, llm_reasoning="r",
+        message_id=201,
     )
     fresh = await repo.create_chat_lead(
         session, owner_tg_id=1, source_chat="c", user_id=2, username="u2",
         message_text="свежий текст", message_date=utcnow(),
         relevance_score=0.9, llm_reasoning="r",
+        message_id=202,
     )
     removed = await purge_old_chat_message_text(session, days=30)
     assert removed == 1
@@ -250,6 +252,7 @@ async def test_message_text_encrypted_in_db(session, monkeypatch):
         session, owner_tg_id=1, source_chat="c", user_id=1, username="u",
         message_text="секретный текст", message_date=utcnow(),
         relevance_score=0.9, llm_reasoning="r",
+        message_id=203,
     )
     assert lead.message_text == "секретный текст"  # ORM — plaintext
 
@@ -263,6 +266,7 @@ async def test_delete_lead_clears_message_text(session):
     lead = await repo.create_chat_lead(
         session, owner_tg_id=1, source_chat="c", user_id=1, username="u",
         message_text="пдн", message_date=utcnow(), relevance_score=0.9, llm_reasoning="r",
+        message_id=204,
     )
     await repo.delete_lead(session, lead.id, 1)
     restored = await repo.get_lead(session, lead.id, 1, include_deleted=True)

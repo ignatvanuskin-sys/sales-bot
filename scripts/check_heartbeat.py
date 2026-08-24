@@ -41,9 +41,21 @@ async def check_heartbeat(stale_minutes: int = 30) -> bool:
         )
         return False
 
+    content = ""
     try:
         content = hb_path.read_text(encoding="utf-8").strip()
-        last_hb = datetime.fromisoformat(content)
+        # Current runner writes a JSON payload with metrics; keep compatibility
+        # with the legacy plain ISO timestamp format.
+        try:
+            import json as _json
+
+            payload = _json.loads(content)
+        except Exception:
+            payload = None
+        timestamp = payload.get("ts") if isinstance(payload, dict) else content
+        if not isinstance(timestamp, str) or not timestamp:
+            raise ValueError("heartbeat timestamp is missing")
+        last_hb = datetime.fromisoformat(timestamp)
     except (ValueError, OSError) as exc:
         text = (
             "⚠️ Chat Monitor: heartbeat-файл повреждён.\n"

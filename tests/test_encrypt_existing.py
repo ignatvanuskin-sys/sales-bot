@@ -22,6 +22,7 @@ async def test_encrypt_existing_dry_run_counts_plaintext(session_factory, sessio
         message_date=utcnow(),
         relevance_score=0.9,
         llm_reasoning="r",
+        message_id=100,
     )
     assert lead.id is not None
 
@@ -47,6 +48,7 @@ async def test_encrypt_existing_apply_encrypts_plaintext(session_factory, sessio
         message_date=utcnow(),
         relevance_score=0.9,
         llm_reasoning="r",
+        message_id=101,
     )
     await session.commit()
 
@@ -79,6 +81,7 @@ async def test_encrypt_existing_skips_already_encrypted(session_factory, session
         message_date=utcnow(),
         relevance_score=0.9,
         llm_reasoning="r",
+        message_id=102,
     )
     await session.commit()
     assert lead.id is not None

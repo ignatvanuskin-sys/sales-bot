@@ -163,9 +163,9 @@ def main() -> int:
     for name, fn in checks:
         if not fn():
             all_passed = False
-            print(f"  ✗ {name}")
+            print(f"  [FAIL] {name}")
         else:
-            print(f"  ✓ {name}")
+            print(f"  [OK] {name}")
 
     return 0 if all_passed else 1
 
