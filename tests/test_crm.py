@@ -131,6 +131,40 @@ def test_format_company_card_includes_manual_links():
     assert "None" not in card
 
 
+def test_entity_type_from_tags_not_name():
+    """Тип показывается ТОЛЬКО из OSM-данных, а не выводится из имени."""
+    from services.places import _entity_type
+
+    # 'Саша' — реальный shop=hairdresser барбершоп в OSM: тип=барбершоп.
+    assert _entity_type({"name": "Саша", "shop": "hairdresser"}) == "Барбершоп/парикмахерская"
+    assert _entity_type({"name": "Gentleman", "shop": "hairdresser"}) == "Барбершоп/парикмахерская"
+    # Другие категории из наших тагов.
+    assert _entity_type({"name": "Кафе", "amenity": "cafe"}) == "Кафе"
+    assert _entity_type({"name": "Фитнес", "leisure": "fitness_centre"}) == "Фитнес-клуб"
+    # Неизвестный тег — возвращаем сам тег; отсутствие тега — None (прячем).
+    assert _entity_type({"name": "X", "shop": "unknown_tag"}) == "Unknown tag"
+    assert _entity_type({"name": "Саша"}) is None
+
+
+def test_company_card_shows_entity_type():
+    card = format_company_card(
+        {"name": "Саша", "entity_type": "Барбершоп/парикмахерская",
+         "address": None, "phone": None, "website": None}
+    )
+    assert "Барбершоп/парикмахерская" in card
+    # Не пишем «Человек» и не выводим 'None'.
+    assert "Человек" not in card
+    assert "None" not in card
+
+
+def test_company_card_hides_unknown_type():
+    card = format_company_card(
+        {"name": "Саша", "address": None, "phone": None, "website": None}
+    )
+    assert "Барбершоп" not in card
+    assert "None" not in card
+
+
 # ---------- строка «насколько нужен мой сервис» ----------
 
 def test_need_score_line_not_analyzed_is_none():

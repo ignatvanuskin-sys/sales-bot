@@ -80,6 +80,10 @@ def need_score_line(ai_score: int | None, has_online_booking: bool | None) -> st
 def format_company_card(company: dict, city: str | None = None) -> str:
     """Карточка результата поиска. Только реально пришедшие поля."""
     lines = [f"<b>{escape(company['name'])}</b>"]
+    # Тип сущности берётся ТОЛЬКО из OSM-данных (source metadata), не из имени.
+    etype = company.get("entity_type")
+    if etype:
+        lines.append(f"{E.COMPANY} {escape(etype)}")
     if company.get("address"):
         lines.append(f"{E.LOCATION} {escape(company['address'])}")
     if company.get("phone"):

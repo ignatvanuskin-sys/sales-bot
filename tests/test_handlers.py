@@ -147,6 +147,38 @@ async def test_paginate_stale_results():
     assert "устарели" in cb.message.last_text()
 
 
+async def test_search_list_open_shows_card_and_back_returns(monkeypatch):
+    """Компактный список: открыть результат -> карточка; slbk -> назад в список."""
+    companies = []
+    for i in range(7):
+        d = {"name": f"Компания {i}", "address": None, "phone": None,
+             "website": None, "entity_type": "Барбершоп/парикмахерская"}
+        companies.append(d)
+
+    state = FakeState(data={"results": companies, "saved_leads": {}, "city": "Астана"})
+    cb = FakeCallback("slo:0", USER)
+    await h_search.search_list_open(cb, state)
+    # открылась карточка с типом
+    assert "Компания 0" in cb.message.texts("edit_text")[-1]
+    assert "Барбершоп/парикмахерская" in cb.message.texts("edit_text")[-1]
+
+    # назад в список
+    cb_back = FakeCallback("slbk", USER, message=cb.message)
+    await h_search.search_list_back_to_list(cb_back, state)
+    out = cb_back.message.texts("edit_text")[-1]
+    assert "Результаты поиска" in out
+    assert "7" in out  # общее количество
+    assert "Компания 0" in out
+
+
+async def test_search_list_paginate_invalid():
+    state = FakeState(data={"results": [{"name": "X", "address": None, "phone": None,
+                                          "website": None}], "saved_leads": {}, "city": "Астана"})
+    cb = FakeCallback("slp:abc", USER)
+    await h_search.search_list_paginate(cb, state)
+    assert any("Некорректные данные" in t for t in cb.alert_texts())
+
+
 async def test_save_from_search_dedup(session_factory):
     state = FakeState(data={"results": [c.to_dict() for c in _companies(1)], "saved_leads": {}})
     cb = FakeCallback("ssv:0", USER)

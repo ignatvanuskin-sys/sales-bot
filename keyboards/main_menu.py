@@ -56,27 +56,79 @@ def categories_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+SEARCH_PAGE_SIZE = 5  # компактных результатов на один экран списка
+
+
+def search_list_page_kb(
+    page: int,
+    total_pages: int,
+    results: list[dict],
+    offset: int,
+    total: int,
+) -> InlineKeyboardMarkup:
+    """Компактный список результатов: одна кнопка = один результат (tap-to-open).
+
+    Каждая кнопка подписана именем (обрезанным) и передаёт глобальный индекс
+    результата через callback slo:<index>. Кнопки НЕ используют Unicode-эмодзи
+    в text — иконки Premium задаются через icon_custom_emoji_id там, где уместно.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    page_slice = results[offset: offset + SEARCH_PAGE_SIZE]
+    for i, company in enumerate(page_slice):
+        idx = offset + i
+        name = company.get("name", "—")
+        # Обрезаем, чтобы кнопка была аккуратной (callback_data не содержит имя).
+        label = name if len(name) <= 30 else name[:29] + "…"
+        if idx == 0:
+            rows.append([InlineKeyboardButton(
+                text=label, callback_data=f"slo:{idx}", icon_custom_emoji_id="5870772616305839506",
+            )])
+        else:
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"slo:{idx}")])
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"slp:{page - 1}"))
+    nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"slp:{page + 1}"))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def search_card_kb(index: int, total: int, saved: bool, lead_id: int | None) -> InlineKeyboardMarkup:
     action_row = []
     if saved and lead_id is not None:
-        action_row.append(InlineKeyboardButton(text="✅ В лидах", callback_data=f"lead:{lead_id}"))
-        action_row.append(InlineKeyboardButton(text="Анализ", callback_data=f"san:{index}"))
+        action_row.append(InlineKeyboardButton(text="В лидах", callback_data=f"lead:{lead_id}",
+                                               icon_custom_emoji_id="5870633910337015697"))
+        action_row.append(InlineKeyboardButton(text="Анализ", callback_data=f"san:{index}",
+                                               icon_custom_emoji_id="5870930636742595124"))
     else:
-        action_row.append(InlineKeyboardButton(text="Сохранить в лиды", callback_data=f"ssv:{index}"))
-        action_row.append(InlineKeyboardButton(text="Анализ", callback_data=f"san:{index}"))
+        action_row.append(InlineKeyboardButton(text="Сохранить в лиды", callback_data=f"ssv:{index}",
+                                               icon_custom_emoji_id="5870676941614354370"))
+        action_row.append(InlineKeyboardButton(text="Анализ", callback_data=f"san:{index}",
+                                               icon_custom_emoji_id="5870930636742595124"))
 
     nav_row = []
     if index > 0:
-        nav_row.append(InlineKeyboardButton(text="◀", callback_data=f"spg:{index - 1}"))
+        nav_row.append(InlineKeyboardButton(text="Назад", callback_data=f"spg:{index - 1}"))
     nav_row.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data="noop"))
     if index < total - 1:
-        nav_row.append(InlineKeyboardButton(text="▶", callback_data=f"spg:{index + 1}"))
+        nav_row.append(InlineKeyboardButton(text="Вперёд", callback_data=f"spg:{index + 1}"))
+
+    back_row = []
+    # «Назад к результатам» — возврат в компактный список (если пришли из него).
+    # Используем callback slbk; обработчик в search.py отрисует список на текущей странице.
+    back_row.append(InlineKeyboardButton(
+        text="К результатам", callback_data="slbk", icon_custom_emoji_id="5893057118545646106",
+    ))
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             action_row,
             nav_row,
-            [InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")],
+            back_row,
+            [InlineKeyboardButton(text="Меню", callback_data="menu:main")],
         ]
     )
 

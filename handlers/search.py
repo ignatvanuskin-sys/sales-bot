@@ -90,8 +90,8 @@ async def category_chosen(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SearchFSM.browsing)
     await state.update_data(results=results, saved_leads={})
 
-    await safe_edit(status_msg, f"{E.CHECK} Нашёл {len(results)} компаний. Листай карточки:")
-    await _show_card(callback.message, state, 0, edit=False)
+    await safe_edit(status_msg, f"{E.CHECK} Нашёл {len(results)} компаний:")
+    await _make_compact_list(callback.message, state, 0)
 
 
 async def _show_card(message: Message, state: FSMContext, index: int, edit: bool = True) -> None:
@@ -108,6 +108,76 @@ async def _show_card(message: Message, state: FSMContext, index: int, edit: bool
         await safe_edit(message, text, reply_markup=kb)
     else:
         await safe_answer(message, text, reply_markup=kb)
+
+
+async def _make_compact_list(
+    message: Message, state: FSMContext, page: int
+) -> None:
+    """Отрисовывает компактный список результатов (5 на страницу)."""
+    from keyboards.main_menu import SEARCH_PAGE_SIZE, search_list_page_kb
+
+    data = await state.get_data()
+    results = data.get("results") or []
+    if not results:
+        await safe_edit(message, f"{E.RELOAD} Результаты поиска устарели. Начни новый поиск.")
+        return
+    total = len(results)
+    total_pages = max(1, (total + SEARCH_PAGE_SIZE - 1) // SEARCH_PAGE_SIZE)
+    if page < 0 or page >= total_pages:
+        page = 0
+    offset = page * SEARCH_PAGE_SIZE
+    page_slice = results[offset: offset + SEARCH_PAGE_SIZE]
+
+    city = data.get("city", "")
+    lines = [f"{E.SEARCH} Результаты поиска · <b>{total}</b>"]
+    for i, company in enumerate(page_slice):
+        idx = offset + i
+        name = escape(company.get("name", "—"))
+        etype = company.get("entity_type")
+        suffix = f" · <b>{escape(etype)}</b>" if etype else ""
+        # Краткая строка: имя + тип (тип — только из OSM, не из имени).
+        lines.append(f"{idx + 1}. <b>{name}</b>{suffix}")
+    text = "\n".join(lines)
+
+    kb = search_list_page_kb(page, total_pages, page_slice, offset, total)
+    await state.update_data(list_page=page)
+    await safe_edit(message, text, reply_markup=kb)
+
+
+@router.callback_query(SearchFSM.browsing, F.data.startswith("slp:"))
+async def search_list_paginate(callback: CallbackQuery, state: FSMContext) -> None:
+    """Листание компактного списка результатов."""
+    try:
+        page = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer(f"{P.CROSS} Некорректные данные. Попробуй ещё раз.", show_alert=True)
+        return
+    await _make_compact_list(callback.message, state, page)
+    await callback.answer()
+
+
+@router.callback_query(SearchFSM.browsing, F.data.startswith("slo:"))
+async def search_list_open(callback: CallbackQuery, state: FSMContext) -> None:
+    """Открыть результат из компактного списка -> детальная карточка."""
+    try:
+        index = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer(f"{P.CROSS} Некорректные данные. Попробуй ещё раз.", show_alert=True)
+        return
+    data = await state.get_data()
+    page = data.get("list_page", 0)
+    await state.update_data(list_page=page, browsing_list=True)
+    await _show_card(callback.message, state, index)
+    await callback.answer()
+
+
+@router.callback_query(SearchFSM.browsing, F.data == "slbk")
+async def search_list_back_to_list(callback: CallbackQuery, state: FSMContext) -> None:
+    """Вернуться из детальной карточки в компактный список результатов."""
+    data = await state.get_data()
+    page = data.get("list_page", 0)
+    await _make_compact_list(callback.message, state, page)
+    await callback.answer()
 
 
 @router.callback_query(SearchFSM.browsing, F.data.startswith("spg:"))
