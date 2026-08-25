@@ -89,7 +89,7 @@ async def export_leads_confirm(callback: CallbackQuery) -> None:
                 text=f"✅ Да, экспортировать {min(total, MAX_EXPORT_ROWS)} лидов{limit_note if total > MAX_EXPORT_ROWS else ''}",
                 callback_data=f"expgo:{callback.from_user.id}",
             ),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="menu:leads"),
+            InlineKeyboardButton(text="Отмена", callback_data="menu:leads", icon_custom_emoji_id="5870657884844462243"),
         ],
     ])
     
@@ -180,8 +180,8 @@ async def delete_lead_confirm(callback: CallbackQuery) -> None:
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"delyes:{lead_id}"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data=f"lead:{lead_id}"),
+            InlineKeyboardButton(text="Да, удалить", callback_data=f"delyes:{lead_id}", icon_custom_emoji_id="5870633910337015697"),
+            InlineKeyboardButton(text="Отмена", callback_data=f"lead:{lead_id}", icon_custom_emoji_id="5870657884844462243"),
         ],
     ])
     await safe_answer(
@@ -212,8 +212,8 @@ async def delete_lead_confirmed(callback: CallbackQuery) -> None:
         f"{E.CHECK} Лид удалён.\n"
         "Напоминания и данные сохранены — можно восстановить.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩ Восстановить", callback_data=f"restore:{lead_id}")],
-            [InlineKeyboardButton(text="↩ К лидам", callback_data="menu:leads")],
+            [InlineKeyboardButton(text="Восстановить", callback_data=f"restore:{lead_id}", icon_custom_emoji_id="6037496202990194718")],
+            [InlineKeyboardButton(text="К лидам", callback_data="menu:leads", icon_custom_emoji_id="5870772616305839506")],
         ]),
     )
     await callback.answer()
@@ -238,8 +238,8 @@ async def restore_lead_handler(callback: CallbackQuery) -> None:
         callback.message,
         f"{E.CHECK} Лид восстановлен.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="↩ К карточке", callback_data=f"lead:{lead.id}")],
-            [InlineKeyboardButton(text="↩ К лидам", callback_data="menu:leads")],
+            [InlineKeyboardButton(text="К карточке", callback_data=f"lead:{lead.id}", icon_custom_emoji_id="5870982283724328568")],
+            [InlineKeyboardButton(text="К лидам", callback_data="menu:leads", icon_custom_emoji_id="5870772616305839506")],
         ]),
     )
     await callback.answer()
@@ -321,13 +321,13 @@ async def list_leads_filtered(callback: CallbackQuery) -> None:
     if total_pages > 1:
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton(text="◀", callback_data=f"leads:{raw_filter}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text="Назад", callback_data=f"leads:{raw_filter}:{page - 1}"))
         nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="▶", callback_data=f"leads:{raw_filter}:{page + 1}"))
+            nav.append(InlineKeyboardButton(text="Вперёд", callback_data=f"leads:{raw_filter}:{page + 1}"))
         rows.append(nav)
 
-    rows.append([InlineKeyboardButton(text="↩ Фильтры", callback_data="menu:leads")])
+    rows.append([InlineKeyboardButton(text="Фильтры", callback_data="menu:leads", icon_custom_emoji_id="6037249452824072506")])
     await safe_answer(
         callback.message,
         f"{E.PEOPLE} Лиды ({label}): {total}",

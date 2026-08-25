@@ -14,10 +14,14 @@ from services.places import CATEGORIES
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Новый поиск", callback_data="menu:search")],
-            [InlineKeyboardButton(text="Мои лиды", callback_data="menu:leads")],
-            [InlineKeyboardButton(text="Chat Monitor", callback_data="menu:chat_monitor")],
-            [InlineKeyboardButton(text="Настройки", callback_data="menu:settings")],
+            [InlineKeyboardButton(text="Новый поиск", callback_data="menu:search",
+                                  icon_custom_emoji_id="5429571366384842791")],
+            [InlineKeyboardButton(text="Мои лиды", callback_data="menu:leads",
+                                  icon_custom_emoji_id="5870772616305839506")],
+            [InlineKeyboardButton(text="Chat Monitor", callback_data="menu:chat_monitor",
+                                  icon_custom_emoji_id="6039422865189638057")],
+            [InlineKeyboardButton(text="Настройки", callback_data="menu:settings",
+                                  icon_custom_emoji_id="5870982283724328568")],
         ]
     )
 
@@ -33,7 +37,7 @@ def chat_monitor_kb(is_enabled: bool, has_chats: bool) -> InlineKeyboardMarkup:
     ]
     if has_chats:
         rows.insert(2, [InlineKeyboardButton(text="Удалить чат", callback_data="cm:chats")])
-    rows.append([InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton(text="Меню", callback_data="menu:main", icon_custom_emoji_id="5257963315258204021")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -43,7 +47,7 @@ def chat_monitor_chats_kb(chats: list[str]) -> InlineKeyboardMarkup:
         for i, _chat in enumerate(chats)
     ]
     rows.append([InlineKeyboardButton(text="Добавить чат", callback_data="cm:add")])
-    rows.append([InlineKeyboardButton(text="↩ Chat Monitor", callback_data="menu:chat_monitor")])
+    rows.append([InlineKeyboardButton(text="Chat Monitor", callback_data="menu:chat_monitor", icon_custom_emoji_id="6039422865189638057")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -52,7 +56,7 @@ def categories_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=label, callback_data=f"cat:{slug}")]
         for slug, (label, _, _) in CATEGORIES.items()
     ]
-    rows.append([InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton(text="Меню", callback_data="menu:main", icon_custom_emoji_id="5257963315258204021")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -87,12 +91,12 @@ def search_list_page_kb(
             rows.append([InlineKeyboardButton(text=label, callback_data=f"slo:{idx}")])
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"slp:{page - 1}"))
+        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"slp:{page - 1}"))
     nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"slp:{page + 1}"))
+        nav.append(InlineKeyboardButton(text="Вперёд", callback_data=f"slp:{page + 1}"))
     rows.append(nav)
-    rows.append([InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton(text="Меню", callback_data="menu:main", icon_custom_emoji_id="5257963315258204021")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -146,7 +150,7 @@ def leads_filter_kb() -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="Без онлайн-записи", callback_data="leads:no_booking")])
     rows.append([InlineKeyboardButton(text="Chat Monitor", callback_data="leads:chat_monitor")])
     rows.append([InlineKeyboardButton(text="Экспорт CSV", callback_data="leads:export")])
-    rows.append([InlineKeyboardButton(text="↩ В меню", callback_data="menu:main")])
+    rows.append([InlineKeyboardButton(text="Меню", callback_data="menu:main", icon_custom_emoji_id="5257963315258204021")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -164,7 +168,7 @@ def lead_card_kb(lead_id: int, has_analysis: bool, reminder_count: int = 0) -> I
     rem_label = f"Напомнить ({reminder_count})" if reminder_count > 0 else "Напомнить"
     rows.append([InlineKeyboardButton(text=rem_label, callback_data=f"rem:{lead_id}")])
     rows.append([InlineKeyboardButton(text="Удалить лид", callback_data=f"del:{lead_id}")])
-    rows.append([InlineKeyboardButton(text="↩ К лидам", callback_data="menu:leads")])
+    rows.append([InlineKeyboardButton(text="К лидам", callback_data="menu:leads", icon_custom_emoji_id="5870772616305839506")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -179,8 +183,8 @@ def reminders_list_kb(lead_id: int, reminders: list) -> InlineKeyboardMarkup:
                 callback_data=f"remdel:{r.id}:{lead_id}",
             )
         ])
-    rows.append([InlineKeyboardButton(text="+ Добавить напоминание", callback_data=f"rem:{lead_id}")])
-    rows.append([InlineKeyboardButton(text="↩ К лиду", callback_data=f"lead:{lead_id}")])
+    rows.append([InlineKeyboardButton(text="Добавить напоминание", callback_data=f"rem:{lead_id}", icon_custom_emoji_id="5258108352008823107")])
+    rows.append([InlineKeyboardButton(text="К лиду", callback_data=f"lead:{lead_id}", icon_custom_emoji_id="5870982283724328568")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -189,7 +193,7 @@ def statuses_kb(lead_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=label, callback_data=f"sts:{lead_id}:{status}")]
         for status, label in STATUS_LABELS.items()
     ]
-    rows.append([InlineKeyboardButton(text="↩ Назад", callback_data=f"lead:{lead_id}")])
+    rows.append([InlineKeyboardButton(text="Назад", callback_data=f"lead:{lead_id}", icon_custom_emoji_id="5873147866364514353")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -205,7 +209,7 @@ def reminder_kb(lead_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="14 дней", callback_data=f"remd:{lead_id}:14"),
             ],
             [InlineKeyboardButton(text="Своя дата", callback_data=f"remc:{lead_id}")],
-            [InlineKeyboardButton(text="↩ Назад", callback_data=f"lead:{lead_id}")],
+            [InlineKeyboardButton(text="Назад", callback_data=f"lead:{lead_id}", icon_custom_emoji_id="5873147866364514353")],
         ]
     )
 
@@ -217,6 +221,6 @@ def messages_kb(lead_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Изменить короткое", callback_data=f"edm:{lead_id}:short"),
                 InlineKeyboardButton(text="Изменить развёрнутое", callback_data=f"edm:{lead_id}:long"),
             ],
-            [InlineKeyboardButton(text="↩ К лиду", callback_data=f"lead:{lead_id}")],
+            [InlineKeyboardButton(text="К лиду", callback_data=f"lead:{lead_id}", icon_custom_emoji_id="5870982283724328568")],
         ]
     )
