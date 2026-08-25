@@ -29,8 +29,8 @@ COPY --chown=appuser:appuser . .
 RUN mkdir -p /app/data /app/session /app/backups \
     && chown -R appuser:appuser /app/data /app/session /app/backups
 
-# Данные (БД, сессия Telethon, бэкапы) монтируются как том — не хранятся в образе
-VOLUME ["/app/data", "/app/session", "/app/backups"]
+# Данные (БД, сессия Telethon, бэкапы) — на Railway используются Railway Volumes,
+# директива VOLUME не поддерживается Railway builder, поэтому убрана.
 
 ENV DB_URL=sqlite+aiosqlite:////app/data/sales_agent.db
 ENV CHAT_MONITOR_SESSION_PATH=/app/session/chat_monitor.session
