@@ -56,6 +56,37 @@ CATEGORIES: dict[str, tuple[str, str, str]] = {
     "florist": ("Flower shop", "shop", "florist"),
 }
 
+# Семантическая метка типа сущности на основе OSM-тегов.
+# Ключ — tag ("shop"/"amenity"/"leisure" value), значение — человекочитаемое имя.
+# НЕ используется эвристика по названию (имя != тип).
+_OSM_TYPE_LABELS: dict[str, str] = {
+    "hairdresser": "Барбершоп/парикмахерская",
+    "beauty": "Салон красоты",
+    "cafe": "Кафе",
+    "restaurant": "Ресторан",
+    "fitness_centre": "Фитнес-клуб",
+    "dentist": "Стоматология",
+    "car_repair": "Автосервис",
+    "florist": "Цветочный магазин",
+}
+
+
+def _entity_type(tags: dict) -> str | None:
+    """Определяет тип сущности ТОЛЬКО по OSM-тегам, а не по названию.
+
+    Возвращает None, если тип неизвестен — тогда тип не показываем вовсе
+    (лучше скрыть, чем угадывать по имени).
+    """
+    for key in ("shop", "amenity", "leisure"):
+        value = tags.get(key)
+        if value:
+            label = _OSM_TYPE_LABELS.get(value)
+            if label:
+                return label
+            # Известный тег вне нашего маппинга — показываем сам тег как тип.
+            return value.replace("_", " ").capitalize()
+    return None
+
 
 class PlacesError(Exception):
     """Any Overpass error (network, timeout, HTTP 4xx/5xx, bad JSON)."""
@@ -67,6 +98,7 @@ class Company:
     address: str | None = None
     phone: str | None = None
     website: str | None = None
+    entity_type: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -74,6 +106,7 @@ class Company:
             "address": self.address,
             "phone": self.phone,
             "website": self.website,
+            "entity_type": self.entity_type,
         }
 
 
@@ -169,6 +202,7 @@ def parse_elements(data: dict) -> list[Company]:
                 address=_build_address(tags),
                 phone=tags.get("phone") or tags.get("contact:phone"),
                 website=tags.get("website") or tags.get("contact:website"),
+                entity_type=_entity_type(tags),
             )
         )
         if len(companies) >= MAX_LIMIT:
