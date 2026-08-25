@@ -128,7 +128,6 @@ async def _make_compact_list(
     offset = page * SEARCH_PAGE_SIZE
     page_slice = results[offset: offset + SEARCH_PAGE_SIZE]
 
-    city = data.get("city", "")
     lines = [f"{E.SEARCH} Результаты поиска · <b>{total}</b>"]
     for i, company in enumerate(page_slice):
         idx = offset + i
