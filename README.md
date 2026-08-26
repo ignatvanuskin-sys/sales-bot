@@ -3,7 +3,7 @@
 Поиск потенциальных бизнес-клиентов (OpenStreetMap Overpass API), AI-анализ через Claude,
 генерация сообщений для холодного контакта, CRM-лайт со статусами и напоминаниями.
 
-**Статус:** кодовая база усилена и проверена, но production rollout заблокирован до ротации скомпрометированных секретов и очистки Git history. См. `SECURITY_INCIDENT.md`.
+**Статус:** задеплоен на Railway (Postgres + Redis + бот, GitHub auto-deploy). История Git очищена от секретов (filter-repo + force-push). Осталось владельцу: ротировать `BOT_TOKEN`/`LLM_API_KEY`/Telethon session (см. `SECURITY_INCIDENT.md`).
 
 ## 🚀 Ключевые возможности
 
@@ -265,7 +265,7 @@ python scripts\telethon_qr_login.py
 - `handlers/` — aiogram-роутеры: старт, меню, поиск, анализ, сообщения, CRM
 - `keyboards/`, `states/` — inline-клавиатуры и FSM-состояния
 - `utils/` — кастомные эмодзи, безопасная отправка, rate limiting, error handling, idempotency
-- `tests/` — pytest (166 тестов)
+- `tests/` — pytest (344+ тестов; ищет юниты без сети: Overpass/LLM/Redis — моки)
 - `scripts/` — утилиты для healthcheck, backup, smoke tests
 
 ## 📊 Мониторинг и команды
@@ -472,6 +472,23 @@ Alembic service `migrate` или `alembic upgrade head`. Бэкап PG — че�
 `scripts/backup_db.py`; при `BACKUP_ENCRYPTION_KEY` сохраняется только AES-GCM
 зашифрованный файл. Инцидент с историческим архивом описан в
 `SECURITY_INCIDENT.md`.
+
+### Deploy на Railway (рекомендуемый production)
+
+Проект задеплоен на Railway: Postgres + Redis + бот (GitHub auto-deploy из `main`).
+
+1. Создать Postgres и Redis: `railway add --database postgres` / `railway add --database redis`
+2. Настроить переменные на сервисе бота (`railway variable set KEY=VAL --service sales-bot`):
+   `ENVIRONMENT=production`, `DB_URL=postgresql+asyncpg://...@postgres.railway.internal:5432/railway`,
+   `REDIS_URL=redis://...@redis.railway.internal:6379`, `ALLOWED_USER_IDS`, `LLM_DAILY_LIMIT=100`,
+   `PII_ENCRYPTION_KEY`/`BACKUP_ENCRYPTION_KEY` (разные Fernet), `SECRETS_ROTATED_AT`,
+   `AUTO_CREATE_SCHEMA=false`.
+3. Миграции: `railway run --service sales-bot -- alembic upgrade head` (схема → `0006`).
+4. Пуш в `main` → Railway авто-деплой. Логи: `railway logs --service sales-bot`.
+
+> ВАЖНО: маппинг `Dockerfile` убран `VOLUME` (Railway не поддерживает) — данные живут
+> в Railway Volumes у Postgres/Redis. Публичные TCP-прокси для БД следует удалять после
+> проверки: `railway tcp-proxy delete <id> --service postgres --yes`.
 
 ### Мониторинг (рекомендуется)
 
