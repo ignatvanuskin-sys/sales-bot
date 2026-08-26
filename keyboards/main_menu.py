@@ -91,10 +91,10 @@ def search_list_page_kb(
             rows.append([InlineKeyboardButton(text=label, callback_data=f"slo:{idx}")])
     nav: list[InlineKeyboardButton] = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="Назад", callback_data=f"slp:{page - 1}"))
+        nav.append(InlineKeyboardButton(text="←", callback_data=f"slp:{page - 1}"))
     nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="Вперёд", callback_data=f"slp:{page + 1}"))
+        nav.append(InlineKeyboardButton(text="→", callback_data=f"slp:{page + 1}"))
     rows.append(nav)
     rows.append([InlineKeyboardButton(text="Меню", callback_data="menu:main", icon_custom_emoji_id="5257963315258204021")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -115,10 +115,10 @@ def search_card_kb(index: int, total: int, saved: bool, lead_id: int | None) -> 
 
     nav_row = []
     if index > 0:
-        nav_row.append(InlineKeyboardButton(text="Назад", callback_data=f"spg:{index - 1}"))
+        nav_row.append(InlineKeyboardButton(text="←", callback_data=f"spg:{index - 1}"))
     nav_row.append(InlineKeyboardButton(text=f"{index + 1}/{total}", callback_data="noop"))
     if index < total - 1:
-        nav_row.append(InlineKeyboardButton(text="Вперёд", callback_data=f"spg:{index + 1}"))
+        nav_row.append(InlineKeyboardButton(text="→", callback_data=f"spg:{index + 1}"))
 
     back_row = []
     # «Назад к результатам» — возврат в компактный список (если пришли из него).

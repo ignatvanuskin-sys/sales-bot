@@ -13,7 +13,8 @@ from config import settings
 from db import repo
 from db.base import session_factory
 from db.models import STATUS_LABELS
-from keyboards.main_menu import main_menu_kb
+from keyboards.main_menu import leads_filter_kb, main_menu_kb
+from states.fsm import SearchFSM
 from utils.emoji_config import E
 from utils.safe_send import safe_answer
 
@@ -32,7 +33,9 @@ HELP_TEXT = (
     "делаю AI-анализ и помогаю подготовить первое сообщение.\n\n"
     "Команды:\n"
     "/start — открыть главное меню\n"
-    "/help — показать эту подсказку\n"
+    "/search — быстрый поиск компаний\n"
+    "/leads — открыть мои лиды\n"
+    "/menu — вернуться в главное меню\n"
     "/stats — статистика лидов и AI-расходов\n"
     "/health — проверка состояния бота\n"
     "/cancel — отменить текущий сценарий\n\n"
@@ -168,6 +171,33 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
     prefix = "Действие отменено." if current_state else "Отменять нечего."
     await safe_answer(message, f"{E.CHECK} {prefix}\n\n{E.HOME} Главное меню:", reply_markup=main_menu_kb())
+
+
+@commands_router.message(Command("menu"))
+async def cmd_menu(message: Message, state: FSMContext) -> None:
+    """/menu — вернуться в главное меню из любой точки."""
+    await state.clear()
+    await safe_answer(message, f"{E.HOME} Главное меню:", reply_markup=main_menu_kb())
+
+
+@commands_router.message(Command("search"))
+async def cmd_search(message: Message, state: FSMContext) -> None:
+    """/search — быстрый запуск поиска компаний (город)."""
+    await state.clear()
+    await state.set_state(SearchFSM.waiting_city)
+    await safe_answer(
+        message, f"{E.SEARCH} В каком городе ищем? Напиши название, например: Москва"
+    )
+
+
+@commands_router.message(Command("leads"))
+async def cmd_leads(message: Message, state: FSMContext) -> None:
+    """/leads — открыть список лидов."""
+    await state.clear()
+    await safe_answer(
+        message, f"{E.PEOPLE} Мои лиды. Выбери фильтр по статусу:",
+        reply_markup=leads_filter_kb(),
+    )
 
 
 @fallback_router.callback_query(F.data.regexp(r"^(spg|ssv|san):"))

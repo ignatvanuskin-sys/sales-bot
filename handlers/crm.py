@@ -322,10 +322,10 @@ async def list_leads_filtered(callback: CallbackQuery) -> None:
     if total_pages > 1:
         nav = []
         if page > 0:
-            nav.append(InlineKeyboardButton(text="Назад", callback_data=f"leads:{raw_filter}:{page - 1}"))
+            nav.append(InlineKeyboardButton(text="←", callback_data=f"leads:{raw_filter}:{page - 1}"))
         nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
-            nav.append(InlineKeyboardButton(text="Вперёд", callback_data=f"leads:{raw_filter}:{page + 1}"))
+            nav.append(InlineKeyboardButton(text="→", callback_data=f"leads:{raw_filter}:{page + 1}"))
         rows.append(nav)
 
     rows.append([InlineKeyboardButton(text="Фильтры", callback_data="menu:leads", icon_custom_emoji_id="6037249452824072506")])

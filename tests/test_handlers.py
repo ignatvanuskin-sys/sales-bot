@@ -7,6 +7,7 @@ session_factory в модулях хендлеров подменяется на
 import pytest
 
 import handlers.analysis as h_analysis
+import handlers.common as h_common
 import handlers.crm as h_crm
 import handlers.menu as h_menu
 import handlers.messages as h_messages
@@ -57,6 +58,32 @@ async def test_menu_main_clears_state():
     await h_menu.show_main_menu(cb, state)
     assert state.data == {} and state.state is None
     assert "Главное меню" in cb.message.texts("edit_text")[-1]
+
+
+async def test_cmd_menu_returns_to_main():
+    from states.fsm import SearchFSM
+    state = FakeState(data={"results": [1]}, state=SearchFSM.browsing)
+    msg = FakeMessage(text="/menu", user_id=USER)
+    await h_common.cmd_menu(msg, state)
+    assert state.data == {} and state.state is None
+    assert "Главное меню" in msg.last_text()
+
+
+async def test_cmd_search_sets_waiting_city():
+    from states.fsm import SearchFSM
+    state = FakeState()
+    msg = FakeMessage(text="/search", user_id=USER)
+    await h_common.cmd_search(msg, state)
+    assert state.state == SearchFSM.waiting_city
+    assert "городе" in msg.last_text()
+
+
+async def test_cmd_leads_shows_filters():
+    state = FakeState()
+    msg = FakeMessage(text="/leads", user_id=USER)
+    await h_common.cmd_leads(msg, state)
+    assert state.state is None
+    assert "Мои лиды" in msg.last_text()
 
 
 # ---------- search ----------
