@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 def ensure_session_path_ready() -> None:
     """Ensure the Telethon session parent directory exists and is writable.
 
+    If CHAT_MONITOR_SESSION_STRING is set (StringSession, 353 chars), no file is needed.
     If chat_monitor.session.b64 exists alongside the source code, decodes it
     into the configured .session path at startup. This lets us commit a
     pre-authorized Telethon session as base64 text (safe for git) instead
@@ -29,6 +30,9 @@ def ensure_session_path_ready() -> None:
         python scripts/telethon_qr_login.py
         base64 -w0 chat_monitor.session > chat_monitor.session.b64
     """
+    if (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+        # Using StringSession — no file needed, skip file/directory checks.
+        return
     import base64
 
     session_path = Path(settings.chat_monitor_session_path)
@@ -89,18 +93,32 @@ def ensure_session_path_ready() -> None:
     ) from last_error
 
 
+def _get_telethon_session():
+    """Возвращает Telethon session: StringSession если задан CHAT_MONITOR_SESSION_STRING, иначе файл."""
+    from telethon.sessions import StringSession
+
+    sess_str = getattr(settings, "chat_monitor_session_string", "") or ""
+    if sess_str.strip():
+        return StringSession(sess_str.strip())
+    return settings.chat_monitor_session_path
+
+
 def _ensure_ready() -> None:
+    has_session = bool(
+        (getattr(settings, "chat_monitor_session_string", "") or "").strip()
+        or settings.chat_monitor_session_path
+    )
     if not (
         settings.chat_monitor_owner_tg_id
         and settings.chat_monitor_api_id
         and settings.chat_monitor_api_hash
         and settings.chat_monitor_phone
-        and settings.chat_monitor_session_path
+        and has_session
     ):
         raise RuntimeError(
             "Chat monitor is not configured. Set CHAT_MONITOR_OWNER_TG_ID, "
             "CHAT_MONITOR_API_ID, CHAT_MONITOR_API_HASH, CHAT_MONITOR_PHONE, "
-            "and CHAT_MONITOR_SESSION_PATH in .env. Chats/threshold can be set in the bot UI."
+            "and CHAT_MONITOR_SESSION_PATH or CHAT_MONITOR_SESSION_STRING in .env. Chats/threshold can be set in the bot UI."
         )
     if not settings.llm_ready:
         raise RuntimeError("LLM provider is not configured for chat monitor scoring.")
@@ -196,7 +214,8 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
     _ensure_ready()
     ensure_session_path_ready()
     # SEC-FIX-1: session-файл — rootkey к аккаунту Telegram, только владельцу ОС
-    restrict_file_permissions(settings.chat_monitor_session_path)
+    if not (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+        restrict_file_permissions(settings.chat_monitor_session_path)
     try:
         from telethon import TelegramClient, events
     except ImportError as exc:
@@ -209,7 +228,7 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
 
     try:
         client = TelegramClient(
-            settings.chat_monitor_session_path,
+            _get_telethon_session(),
             settings.chat_monitor_api_id,
             settings.chat_monitor_api_hash,
         )
@@ -339,19 +358,21 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
         )
 
         # Render has no interactive terminal — we must have an existing .session file
-        session_file = Path(settings.chat_monitor_session_path)
-        if not session_file.exists():
-            logger.warning(
-                "Chat Monitor: session file %s not found. "
-                "Run locally or use QR login to create .session, "
-                "then encode to base64 and commit as chat_monitor.session.b64.",
-                settings.chat_monitor_session_path,
-            )
-            raise RuntimeError(
-                "Chat Monitor requires an existing .session file. "
-                "Encode chat_monitor.session to base64 and commit "
-                "as chat_monitor.session.b64"
-            )
+        # If using StringSession (env var), skip file check
+        if not (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+            session_file = Path(settings.chat_monitor_session_path)
+            if not session_file.exists():
+                logger.warning(
+                    "Chat Monitor: session file %s not found. "
+                    "Run locally or use QR login to create .session, "
+                    "then encode to base64 and commit as chat_monitor.session.b64.",
+                    settings.chat_monitor_session_path,
+                )
+                raise RuntimeError(
+                    "Chat Monitor requires an existing .session file. "
+                    "Encode chat_monitor.session to base64 and commit "
+                    "as chat_monitor.session.b64"
+                )
 
         try:
             await client.start(
@@ -365,7 +386,8 @@ async def run_chat_monitor(bot, session_factory_arg) -> None:
             )
             raise
 
-        restrict_file_permissions(settings.chat_monitor_session_path)
+        if not (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+            restrict_file_permissions(settings.chat_monitor_session_path)
 
         me = await client.get_me()
         logger.info(
@@ -410,7 +432,8 @@ async def run() -> None:
     _ensure_ready()
     ensure_session_path_ready()
     # SEC-FIX-1: session-файл — rootkey к аккаунту Telegram, только владельцу ОС
-    restrict_file_permissions(settings.chat_monitor_session_path)
+    if not (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+        restrict_file_permissions(settings.chat_monitor_session_path)
     try:
         from telethon import TelegramClient, events
     except ImportError as exc:
@@ -420,7 +443,7 @@ async def run() -> None:
     await init_db()
 
     client = TelegramClient(
-        settings.chat_monitor_session_path,
+        _get_telethon_session(),
         settings.chat_monitor_api_id,
         settings.chat_monitor_api_hash,
     )
@@ -471,7 +494,8 @@ async def run() -> None:
     )
     # SEC-FIX: Telethon мог создать/переписать сессионный файл при авторизации —
     # права ограничиваем ПОСЛЕ старта клиента (M5-monitor).
-    restrict_file_permissions(settings.chat_monitor_session_path)
+    if not (getattr(settings, "chat_monitor_session_string", "") or "").strip():
+        restrict_file_permissions(settings.chat_monitor_session_path)
     me = await client.get_me()
     logger.info(
         "Chat monitor started as user_id=%s username=%s",

@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     chat_monitor_api_hash: str = ""
     chat_monitor_phone: str = ""
     chat_monitor_session_path: str = "chat_monitor.session"
+    # StringSession string for Railway/production (fits in env var, 353 chars, vs 307k file).
+    # If set, it takes precedence over the file. Generate via the gen_string_session script.
+    chat_monitor_session_string: str = ""
     # Если Telegram не присылает код в приложение, можно попробовать принудительный SMS.
     chat_monitor_force_sms: bool = False
     # Comma-separated usernames/ids: @chat_one,-1001234567890
