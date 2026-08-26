@@ -62,7 +62,8 @@ copy .env.example .env
 ::   BOT_TOKEN=...          (от @BotFather)
 ::   LLM_PROVIDER=openrouter (бесплатно) или anthropic
 ::   LLM_API_KEY=...         (ключ выбранного провайдера)
-::   LLM_MODEL=moonshotai/kimi-k2.6:free   (для openrouter; без лишнего префикса LLM_MODEL=)
+::   LLM_MODEL=minimax/minimax-m3:free   (для openrouter; стабильна на free-tier, без 429)
+::   (если появляется 429 у выбранной модели — переключись на minimax-m3:free)
 :: чтобы вернуться на Anthropic: LLM_PROVIDER=anthropic + ANTHROPIC_API_KEY
 
 :: 4. Старт (таблицы SQLite создадутся автоматически)
@@ -265,7 +266,7 @@ python scripts\telethon_qr_login.py
 - `handlers/` — aiogram-роутеры: старт, меню, поиск, анализ, сообщения, CRM
 - `keyboards/`, `states/` — inline-клавиатуры и FSM-состояния
 - `utils/` — кастомные эмодзи, безопасная отправка, rate limiting, error handling, idempotency
-- `tests/` — pytest (344+ тестов; ищет юниты без сети: Overpass/LLM/Redis — моки)
+- `tests/` — pytest (347+ тестов; юниты без сети: Overpass/LLM/Redis — моки)
 - `scripts/` — утилиты для healthcheck, backup, smoke tests
 
 ## 📊 Мониторинг и команды
