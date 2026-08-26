@@ -86,8 +86,9 @@ async def export_leads_confirm(callback: CallbackQuery) -> None:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text=f"✅ Да, экспортировать {min(total, MAX_EXPORT_ROWS)} лидов{limit_note if total > MAX_EXPORT_ROWS else ''}",
+                text=f"Да, экспортировать {min(total, MAX_EXPORT_ROWS)} лидов{limit_note if total > MAX_EXPORT_ROWS else ''}",
                 callback_data=f"expgo:{callback.from_user.id}",
+                icon_custom_emoji_id="5870633910337015697",
             ),
             InlineKeyboardButton(text="Отмена", callback_data="menu:leads", icon_custom_emoji_id="5870657884844462243"),
         ],
